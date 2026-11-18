@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teigbuch – Kompatibilitätstest</title>
+<style>
+  :root { --bg: #F6F2EC; --text: #1F1A16; --ok: #2F7A4A; --bad: #B3261E; --muted: #7C6F65; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #131110; --text: #F4EDE6; --ok: #7CC490; --bad: #F2867E; --muted: #A69789; } }
+  :root[data-theme="dark"] { --bg: #131110; --text: #F4EDE6; --ok: #7CC490; --bad: #F2867E; --muted: #A69789; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; max-width: 860px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sum { font-size: 1.15rem; font-weight: 700; margin: 12px 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  h2 { font-size: 1rem; margin: 18px 0 6px; }
+  li { margin: 2px 0; }
+  small { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Teigbuch – Kompatibilitätstest</h1>
+<small>Prüft, dass alte Sicherungen mit der aktuellen App-Version weiter funktionieren. Nach JEDER Änderung am Datenformat ausführen – alles muss grün sein.</small>
+<div class="sum" id="sum">läuft …</div>
+<div id="out"></div>
+<script type="module">
+import * as C from '../calc.js';
+import * as MG from '../migrate.js';
+
+const out = document.getElementById('out');
+let pass = 0, fail = 0, section;
+const group = (title) => { section = document.createElement('ul'); const h = document.createElement('h2'); h.textContent = title; out.append(h, section); };
+const check = (label, cond, detail = '') => {
+  const li = document.createElement('li');
+  li.innerHTML = `<span class="${cond ? 'ok' : 'bad'}">${cond ? '✔' : '✘'}</span> ${label}${detail ? ` <small>(${detail})</small>` : ''}`;
+  section.append(li);
+  cond ? pass++ : fail++;
+};
+const near = (a, b, tol = 0.05) => Math.abs(a - b) <= tol;
+const load = async (f) => (await fetch(`./fixtures/${f}?t=${Date.now()}`)).json();
+const roundtrip = (o) => JSON.parse(JSON.stringify(o));
+
+// ---------- 1) Sicherung aus App 1.4 (Format 1, Einträge ohne Versionsfeld) ----------
+{
+  group('Sicherung aus App 1.4 (backup-format1-app1.4.json)');
+  const f = await load('backup-format1-app1.4.json');
+  const recs = f.recipes.map((r) => MG.importRecipe(r));
+  recs.forEach(({ rec, newer }) => check(`„${rec.name}“ auf aktuelles Format gebracht`, rec.v === MG.SCHEMA && !newer, `v=${rec.v}`));
+  const biga = recs[0].rec, c = C.calc(biga);
+  check('Biga-Rezept: Teig gesamt 1220 g', near(c.D, 1220, 0.5), C.fmtG(c.D));
+  check('Biga: 200 g Mehl / 100 g Wasser / 5 g Hefe', near(c.pfs[0].flour, 200, 0.1) && near(c.pfs[0].water, 100, 0.1) && near(c.pfs[0].yeast, 5, 0.01));
+  check('Hauptteig: 500 g Mehl / 400 g Wasser / 15 g Salz', near(c.main.flours[0].g, 500, 0.1) && near(c.main.water, 400, 0.2) && near(c.main.salt, 15, 0.05));
+  check('Trockenhefe bleibt Trockenhefe', biga.yeastType === 'dry');
+  check('Ablauf vollständig (5 Schritte, 48 h Biga)', biga.steps.length === 5 && biga.steps[1].durationMin === 2880);
+  check('Vorteig-Zuordnung der Schritte erhalten', biga.steps[0].stage === biga.preferments[0].id);
+  const sd = recs[1].rec, c2 = C.calc(sd);
+  check('Sauerteigbrot: 1 × 950 g', near(c2.D, 950, 0.5));
+  check('Mehlmischung 85/15 erhalten', sd.flours.length === 2 && sd.flours[1].pct === 15);
+  check('Anstellgut wird berechnet', c2.pfs[0].starter > 0);
+  check('Dehnen & Falten (4× alle 30 min) erhalten', sd.steps[0].repeat?.count === 4 && sd.steps[0].repeat?.intervalMin === 30);
+  check('Favorit erhalten', sd.favorite === true);
+  check('Keine Rückfragen nötig', recs.every(({ rec }) => MG.openQuestions(rec).length === 0));
+  const log = MG.importLog(f.logs[0]).rec;
+  check('Tagebuch-Eintrag übernommen (v, Note, Teilnote, Temperaturen)', log.v === MG.SCHEMA && log.rating === 4 && log.sub.rim === 5 && log.fridgeTemp === '5' && near(log.params.hydration, 71.43, 0.001));
+  // Erneuter Export + Import darf nichts verändern (idempotent)
+  const again = MG.importRecipe(roundtrip(biga)).rec;
+  check('Export → Import ändert nichts (Biga)', JSON.stringify(C.calc(again).totals) === JSON.stringify(c.totals) && again.steps.length === biga.steps.length);
+}
+
+// ---------- 2) Unvollständige Daten → App fragt nach, statt zu raten ----------
+{
+  group('Unvollständiges Rezept (incomplete-recipe.json)');
+  const f = await load('incomplete-recipe.json');
+  const { rec } = MG.importRecipe(f.recipes[0]);
+  const ids = MG.openQuestions(rec).map((q) => q.id).sort();
+  check('Fragt nach Kategorie, Hefe-Art und Teiglingsgewicht', JSON.stringify(ids) === JSON.stringify(['category', 'pieceWeight', 'yeastType']), ids.join(', '));
+  check('Es wird nichts geraten (Hefe-Art leer)', rec.yeastType === '');
+  const ans = { category: 'pizza', yeastType: 'fresh', pieceWeight: '280' };
+  MG.openQuestions(rec).forEach((q) => q.apply(rec, ans[q.id]));
+  check('Nach dem Nachtragen keine offenen Fragen', MG.openQuestions(rec).length === 0);
+  check('Danach rechenbar: 4 × 280 g = 1120 g', near(C.calc(rec).D, 1120, 0.5));
+}
+
+// ---------- 3) Sicherung aus einer NEUEREN App-Version ----------
+{
+  group('Sicherung aus neuerer Version (future-schema99.json)');
+  const f = await load('future-schema99.json');
+  const m = MG.importRecipe(f.recipes[0]), r = m.rec;
+  check('Als „neuere Version“ erkannt', m.newer === true);
+  check('Unbekannte Felder bleiben erhalten (Rezept, Menge, Vorteig, Schritt)',
+    r.futureRating?.crispness === 4 && r.yield.futureUnit === 'oz' && r.preferments[0].futurePfField === true && r.steps[0].futureStepField === 'Spirale');
+  check('Versionskennung wird nicht herabgesetzt', r.v === 99);
+  check('Bekannte Werte trotzdem nutzbar (4 × 250 g)', near(C.calc(r).D, 1000, 0.5));
+  const l = MG.importLog(f.logs[0]);
+  check('Tagebuch: unbekannte Felder erhalten', l.newer && l.rec.futureLogField === 'x' && l.rec.params.futureParam === 1);
+}
+
+// ---------- 4) Alle Vorlagen überstehen Export → Import ----------
+{
+  group('Vorlagen: Export → Import (aktuelles Format)');
+  for (const t of C.TEMPLATES) {
+    const r = t.build(); r.v = MG.SCHEMA;
+    const back = MG.importRecipe(roundtrip(r)).rec;
+    const same = JSON.stringify(C.calc(back).totals) === JSON.stringify(C.calc(r).totals) && back.steps.length === r.steps.length
+      && back.steps.every((s, i) => s.durationMin === r.steps[i].durationMin && s.location === r.steps[i].location && s.stage === r.steps[i].stage);
+    check(`„${r.name}“ unverändert`, same && MG.openQuestions(back).length === 0);
+  }
+}
+
+const sum = document.getElementById('sum');
+sum.textContent = fail ? `✘ ${fail} von ${pass + fail} Prüfungen fehlgeschlagen` : `✔ Alle ${pass} Prüfungen bestanden`;
+sum.className = `sum ${fail ? 'bad' : 'ok'}`;
+document.title = (fail ? '✘ ' : '✔ ') + document.title;
+window.__compat = { pass, fail };
+</script>
+</body>
+</html>

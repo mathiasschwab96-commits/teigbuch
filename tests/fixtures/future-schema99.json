@@ -1,0 +1,29 @@
+{
+ "app": "Teigbuch",
+ "format": 99,
+ "schema": 99,
+ "appVersion": "9.9.9",
+ "recipes": [
+  {
+   "v": 99,
+   "id": "future1",
+   "name": "Rezept aus der Zukunft",
+   "category": "pizza",
+   "futureRating": { "crispness": 4 },
+   "yield": { "mode": "pieces", "count": 4, "pieceWeight": 250, "flour": 0, "loss": 0, "futureUnit": "oz" },
+   "flours": [{ "name": "Tipo 00", "pct": 100 }],
+   "water": { "pct": 65 },
+   "oil": { "pct": 0 },
+   "salt": 2.8,
+   "yeastType": "fresh",
+   "yeastPct": 0.1,
+   "extras": [],
+   "preferments": [{ "id": "p1", "type": "poolish", "name": "Poolish", "flourPct": 30, "hydration": 100, "yeastPct": 0.3, "starterPct": 0, "starterHydration": 100, "flourName": "Tipo 00", "futurePfField": true }],
+   "steps": [{ "id": "x1", "kind": "mix", "name": "Kneten", "durationMin": 15, "location": "rt", "futureStepField": "Spirale" }],
+   "updatedAt": 1794990000000
+  }
+ ],
+ "logs": [
+  { "v": 99, "id": "flog1", "recipeId": "future1", "date": "2026-12-01", "rating": 5, "params": { "hydration": 65, "futureParam": 1 }, "futureLogField": "x" }
+ ]
+}

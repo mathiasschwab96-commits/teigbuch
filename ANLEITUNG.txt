@@ -1,0 +1,389 @@
+==================================================================
+  TEIGBUCH – Pizza & Brot
+  Schritt-für-Schritt-Anleitung zur Inbetriebnahme
+==================================================================
+
+Was du am Ende hast:
+  - Die App als Symbol auf dem Startbildschirm deines Handys (Android oder iPhone)
+  - Ein gemeinsames Rezeptbuch auf allen deinen Geräten (Sync über Supabase)
+  - Einen automatischen "Wecker", damit das kostenlose Supabase-Projekt nicht einschläft
+
+Was du brauchst:
+  - Ca. 30–45 Minuten, am besten am PC
+  - Eine PRIVATE E-Mail-Adresse (für GitHub, Supabase und die Anmeldung in der App)
+  - Diesen Ordner "teigbuch" mit allen Dateien
+
+Kosten: keine. GitHub und Supabase werden im kostenlosen Tarif genutzt.
+
+Übersicht:
+  Teil A  Supabase einrichten (Datenbank für den Sync)        ~ 10 min
+  Teil B  Zugangsdaten in die App eintragen (config.js)       ~  3 min
+  Teil C  App online stellen (GitHub Pages)                   ~ 10 min
+  Teil D  Adresse der App in Supabase hinterlegen              ~  2 min
+  Teil E  Wecker einrichten (Supabase wach halten)            ~  5 min
+  Teil F  App aufs Handy installieren                         ~  3 min
+  Teil G  Anmelden und Sync aktivieren                        ~  2 min
+  Teil H  Erste Schritte in der App
+  Teil I  Updates einspielen
+  Teil J  Wenn etwas nicht klappt
+
+Hinweis: Die Menüs von Supabase und GitHub ändern sich gelegentlich.
+Wenn ein Knopf etwas anders heißt, suche nach dem sinngemäßen Begriff.
+
+
+------------------------------------------------------------------
+TEIL A – Supabase einrichten
+------------------------------------------------------------------
+
+A1. Öffne https://supabase.com und klicke auf "Start your project".
+    Registriere dich (E-Mail oder GitHub-Konto) und bestätige deine E-Mail.
+
+A2. Neues Projekt anlegen: "New project"
+      - Name:      teigbuch
+      - Database Password: ein sicheres Passwort erzeugen lassen und
+                   notieren (wird für die App nicht gebraucht, aber gut aufheben)
+      - Region:    "Central EU (Frankfurt)"
+      - Tarif:     Free
+    -> "Create new project". Das Einrichten dauert 1–2 Minuten.
+
+A3. Datenbank vorbereiten:
+      - Links im Menü "SQL Editor" öffnen
+      - "New query" (bzw. "+")
+      - Die Datei "supabase-setup.sql" aus diesem Ordner mit einem
+        Texteditor öffnen (Rechtsklick -> Öffnen mit -> Editor),
+        ALLES markieren (Strg+A), kopieren (Strg+C)
+      - Im SQL Editor einfügen (Strg+V) und rechts unten "Run" klicken
+      - Ergebnis unten: "Success. No rows returned"   ✔
+      (Falls Supabase vor "destructive operations" warnt: bestätigen –
+       das Skript löscht nur alte Regeln, um sie neu anzulegen.)
+
+A4. Anmeldung per E-Mail prüfen:
+      - Links "Authentication" -> "Sign In / Providers":
+        "Email" muss aktiviert sein (ist es normalerweise schon).
+      - Mehr ist nicht nötig. Die E-Mail-Vorlagen bleiben, wie sie sind:
+        Die App meldet dich über den Link "Sign in" aus der E-Mail an
+        (Link kopieren und in der App einfügen, siehe Teil G).
+      (Hinweis: Im Gratis-Tarif lassen sich die Vorlagen nur mit eigenem
+       E-Mail-Server/SMTP bearbeiten – das brauchst du nicht.)
+
+A5. Zugangsdaten abholen:
+      - Links unten "Project Settings" (Zahnrad) -> "API Keys"
+        (bei älteren Projekten: "API").
+      - Notiere dir:
+          1) Project URL      z. B. https://abcdefghijkl.supabase.co
+             (steht unter "Data API" bzw. ganz oben bei "API")
+          2) Publishable key  beginnt mit  sb_publishable_...
+             (bei älteren Projekten heißt er "anon public" und beginnt mit eyJ...)
+      ACHTUNG: Den "secret"- bzw. "service_role"-Schlüssel NIE verwenden
+      oder weitergeben!
+
+
+------------------------------------------------------------------
+TEIL B – Zugangsdaten in die App eintragen
+------------------------------------------------------------------
+
+B1. Öffne im Ordner "teigbuch" die Datei "config.js" mit dem Editor.
+
+B2. Trage die beiden Werte aus A5 zwischen die Anführungszeichen ein:
+
+      export const SUPABASE_URL = 'https://abcdefghijkl.supabase.co';
+      export const SUPABASE_ANON_KEY = 'sb_publishable_xxxxxxxxxxxxxxxx';
+
+B3. Speichern (Strg+S).
+
+Hinweis: Dieser Schlüssel darf öffentlich sein – deine Rezepte sind durch
+die Zugriffsregeln aus Teil A geschützt (jeder sieht nur seine eigenen Daten).
+
+
+------------------------------------------------------------------
+TEIL C – App online stellen (GitHub Pages)
+------------------------------------------------------------------
+
+Eine installierbare Web-App braucht eine https-Adresse. GitHub Pages
+stellt die App kostenlos bereit. Hochgeladen wird NUR der App-Code –
+deine Rezepte liegen nie bei GitHub.
+
+C1. Auf https://github.com ein kostenloses Konto anlegen (Sign up).
+
+C2. Neues Repository: oben rechts "+" -> "New repository"
+      - Repository name: teigbuch
+      - Sichtbarkeit:    Public  (GitHub Pages ist im Gratis-Konto nur
+                         für öffentliche Repositories verfügbar)
+      - "Add a README file": NICHT anhaken
+    -> "Create repository"
+
+C3. Dateien hochladen:
+      - Auf der neuen, leeren Seite auf "uploading an existing file" klicken
+      - Im Windows-Explorer den Ordner "teigbuch" öffnen, ALLE Dateien und
+        Unterordner markieren (Strg+A) und ins Browserfenster ziehen
+        (inkl. Ordner "icons" und ".github"; den Ordner "rezepte" brauchst
+        du NICHT hochzuladen – er ist nur für dich zum Importieren)
+      - Warten, bis alle Dateien aufgelistet sind
+      - Unten "Commit changes"
+    Kontrolle: Auf der Repository-Startseite müssen u. a. "index.html",
+    "app.js", "config.js" und der Ordner "icons" direkt sichtbar sein
+    (NICHT in einem Unterordner "teigbuch").
+
+C4. GitHub Pages einschalten:
+      - Im Repository oben "Settings" -> links "Pages"
+      - Unter "Build and deployment" -> Source: "Deploy from a branch"
+      - Branch: "main", Ordner: "/ (root)" -> "Save"
+      - Nach 1–2 Minuten die Seite neu laden. Oben steht dann:
+        "Your site is live at https://DEINNAME.github.io/teigbuch/"
+
+C5. Diese Adresse notieren und einmal am PC öffnen. Die App sollte
+    erscheinen. In den Einstellungen sollte bei "Geräte-Sync" ein Knopf
+    "Anmelden" stehen (nicht "nicht eingerichtet"). Falls doch: Teil B prüfen.
+
+
+------------------------------------------------------------------
+TEIL D – Adresse der App in Supabase hinterlegen
+------------------------------------------------------------------
+
+D1. Supabase -> "Authentication" -> "URL Configuration"
+D2. "Site URL": deine Adresse aus C4 eintragen
+      z. B. https://DEINNAME.github.io/teigbuch/
+D3. "Save"
+
+(Damit führt der Link in der Anmelde-E-Mail zur App, falls du ihn doch
+ einmal antippst statt ihn zu kopieren. Auf Android-Handys funktioniert
+ die Anmeldung dann auch direkt per Antippen.)
+
+
+------------------------------------------------------------------
+TEIL E – Wecker einrichten (Supabase wach halten)
+------------------------------------------------------------------
+
+Supabase pausiert Gratis-Projekte nach 7 Tagen ohne Nutzung. Ein
+automatischer Zeitplan bei GitHub fragt die Datenbank alle 3 Tage kurz an.
+
+E1. Geheimnisse hinterlegen: Repository -> "Settings" ->
+    "Secrets and variables" -> "Actions" -> "New repository secret"
+      - Name: SUPABASE_URL        Secret: deine Project URL      -> "Add secret"
+      - Name: SUPABASE_ANON_KEY   Secret: dein Publishable key   -> "Add secret"
+
+E2. Prüfen, ob der Zeitplan hochgeladen wurde: Auf der Repository-Seite
+    muss ein Ordner ".github" zu sehen sein.
+    FALLS NICHT (manche Browser übertragen Ordner mit Punkt nicht):
+      - "Add file" -> "Create new file"
+      - Als Dateiname genau eingeben:  .github/workflows/supabase-keepalive.yml
+      - Den Inhalt der gleichnamigen Datei aus dem Ordner
+        teigbuch\.github\workflows\ mit dem Editor öffnen, alles kopieren,
+        einfügen -> "Commit changes"
+
+E3. Testen: Repository -> Reiter "Actions"
+      - Falls gefragt: "I understand my workflows, go ahead and enable them"
+      - Links "Supabase wach halten" -> rechts "Run workflow" -> "Run workflow"
+      - Nach ca. 30 Sekunden: grüner Haken ✔ = alles richtig
+        Roter Kreis ✖ = Lauf anklicken und die Meldung lesen
+        (meist ist ein Secret falsch geschrieben).
+
+Ab jetzt läuft der Wecker automatisch alle 3 Tage. Zusätzlich hält jeder
+Abgleich aus der App das Projekt wach.
+
+
+------------------------------------------------------------------
+TEIL F – App aufs Handy installieren
+------------------------------------------------------------------
+
+ANDROID (Chrome):
+  F1. Adresse aus C4 in Chrome öffnen
+  F2. Menü ⋮ -> "App installieren" (oder "Zum Startbildschirm hinzufügen")
+  F3. Teigbuch über das neue Symbol starten
+  F4. Bei der Frage nach Benachrichtigungen: "Zulassen"
+
+iPHONE (Safari, iOS 16.4 oder neuer):
+  F1. Adresse aus C4 in SAFARI öffnen (nicht Chrome)
+  F2. Teilen-Symbol (Quadrat mit Pfeil) -> "Zum Home-Bildschirm" -> "Hinzufügen"
+  F3. Teigbuch ab jetzt IMMER über das Symbol auf dem Home-Bildschirm öffnen
+      (Safari und die installierte App haben getrennte Speicher!)
+  F4. Benachrichtigungen erlauben, wenn gefragt
+
+TIPP Benachrichtigungen: Erinnerungen kommen, solange die App offen ist
+oder kurz im Hintergrund läuft. Für garantierte Wecker im Backvorgang
+oben ⋯ -> "In Kalender eintragen" wählen.
+
+
+------------------------------------------------------------------
+TEIL G – Anmelden und Sync aktivieren
+------------------------------------------------------------------
+
+G1. In der App unten "Einstellungen" -> Karte "Geräte-Sync" -> "Anmelden"
+G2. E-Mail-Adresse eingeben -> "E-Mail senden"
+G3. Die E-Mail von Supabase öffnen (auch im Spam-Ordner nachsehen).
+    Den Link "Sign in" NICHT antippen, sondern:
+      - Handy: Link GEDRÜCKT HALTEN -> "Link kopieren"
+      - PC: Rechtsklick auf den Link -> "Link-Adresse kopieren"
+G4. Zurück in die App -> Link ins Feld einfügen (oder "📋 Aus
+    Zwischenablage einfügen") -> "Anmelden"
+G5. Fertig: Die Karte zeigt "aktiv" und deine E-Mail-Adresse.
+
+Warum kopieren statt antippen? Ein angetippter Link öffnet sich im Browser.
+Auf dem iPhone wäre die Anmeldung dann in Safari statt in der installierten
+App. Außerdem ist jeder Link nur EINMAL gültig – wurde er schon angetippt,
+funktioniert das Einfügen nicht mehr (dann einfach neue E-Mail anfordern).
+
+Auf jedem weiteren Gerät (Tablet, zweites Handy, PC): Teil F + Teil G mit
+DERSELBEN E-Mail-Adresse wiederholen – schon ist dort dasselbe Rezeptbuch.
+
+Wie der Sync arbeitet:
+  - Alles bleibt auch offline nutzbar; abgeglichen wird automatisch beim
+    Öffnen der App, nach jeder Änderung und alle 5 Minuten.
+  - Abgeglichen werden Rezepte, Tagebuch-Einträge und Fotos.
+  - Laufende Backvorgänge/Timer und Einstellungen bleiben pro Gerät.
+  - Wird dasselbe Rezept auf zwei Geräten gleichzeitig geändert, gewinnt
+    die zuletzt gespeicherte Version.
+  - Löschen funktioniert auch offline oder abgemeldet – die Löschung wird
+    beim nächsten Abgleich nachgereicht. Wird ein Rezept gelöscht,
+    verschwinden auch seine Tagebuch-Einträge auf allen Geräten.
+  - Meldest du dich auf einem Gerät mit einem ANDEREN Konto an, fragt die
+    App, ob die vorhandenen Rezepte übernommen oder entfernt werden sollen.
+  - Supabase verschickt im Gratis-Tarif nur wenige E-Mails pro Stunde.
+    Kommt keine E-Mail, einige Minuten warten und erneut senden.
+
+
+------------------------------------------------------------------
+TEIL H – Erste Schritte in der App
+------------------------------------------------------------------
+
+H1. Ausprobieren: Einstellungen -> Daten -> "Mehr" -> "Beispielrezepte laden"
+
+H2. Fertiges Beispiel importieren: Im Ordner "rezepte" liegt
+    "bester-pizzateig-mit-biga.teigbuch.json" (Pizzateig mit 48 h Biga).
+    Datei aufs Handy bringen (z. B. per Mail an dich oder über Google Drive),
+    dann in der App: Einstellungen -> Daten -> "Importieren" -> Datei wählen.
+
+H3. Eigenes Rezept anlegen: Rezepte -> "+ Rezept" -> Vorlage oder
+    "Leeres Pizzarezept" -> Schritt für Schritt durchgehen -> "Speichern"
+      1 Grunddaten   Name, Kategorie, Beschreibung, Quelle (z. B. Link zur Webseite)
+      2 Teigmenge    "Nach Teiglingen" (z. B. 4 × 280 g) oder "Nach Mehlmenge"
+      3 Mehl & Wasser  Wasser wahlweise in % (Hydration) ODER in Gramm
+      4 Vorteig      Biga, Poolish, Sauerteig, Lievito Madre …
+      5 Salz, Hefe & Co.  zuerst Hefe-Art wählen (Frisch- oder Trockenhefe)
+      6 Teigführung  "✨ Ablauf vorschlagen" und anpassen, oder selbst anlegen
+      7 Fotos & Notizen
+
+    TIPP – Rezept aus dem Internet oder einem Buch abtippen:
+    In den Schritten "Vorteig" und "Salz, Hefe & Co." oben
+    "Mengen eingeben in: Gramm" wählen. Dann einfach die Grammangaben
+    eintippen (z. B. Biga: 200 g Mehl, 100 g Wasser, 5 g Hefe; Salz 15 g) –
+    die App rechnet die Prozente selbst aus. Die Wahl wird gemerkt.
+
+H4. Menge ändern (skalieren): Rezept öffnen -> Reiter "Zutaten" ->
+    Karte "Menge anpassen":
+      - "Teiglinge": Anzahl mit − / + und Gewicht eintragen, z. B. 4 × 280 g
+      - "Mehl": gewünschte Mehlmenge eintragen
+    Alle Zutaten (auch im Vorteig) passen sich sofort an. "Backen planen"
+    übernimmt diese Menge. "Als Standard" speichert sie dauerhaft im Rezept,
+    "Zurück auf …" stellt die Originalmenge wieder her.
+
+H5. Backen: Rezept öffnen -> "Backen planen"
+      - "Jetzt starten": zeigt sofort, wann gebacken wird
+      - "Backen um …": rechnet die Startzeit rückwärts aus
+      - Fällt ein Schritt in die Nacht: "🪄 Anpassen"
+H6. Während des Backens: "Weiter" tippen, wenn ein Schritt erledigt ist.
+    "🙌 Groß" öffnet den Teighände-Modus.
+H7. Danach: Tagebuch-Eintrag mit Sternen, Notizen und Fotos anlegen.
+H8. Optional: Zusatzfunktionen unter Einstellungen -> Funktionen an/aus.
+
+Zusätzliche Sicherung (empfohlen, ca. 1x im Monat):
+  Einstellungen -> Daten -> "Sichern" – die Datei z. B. in Google Drive
+  oder iCloud ablegen. So hast du ein Backup unabhängig von Supabase.
+
+Sicherungen bleiben dauerhaft gültig:
+  - Jede Sicherungsdatei kann auch mit späteren App-Versionen wieder
+    importiert werden. Ältere Dateien werden beim Import automatisch auf den
+    aktuellen Stand gebracht – Mengen, Abläufe und Tagebuch bleiben gleich.
+  - Braucht eine neuere Version eine Angabe, die es früher nicht gab (und die
+    sich nicht sicher ableiten lässt), rät die App NICHT, sondern fragt dich:
+    Auf der Startseite erscheint "📝 … braucht noch eine Angabe" ->
+    "Nachtragen" -> Fragen beantworten -> "Speichern".
+  - Dasselbe gilt für Rezepte, die schon auf dem Handy sind: Nach einem
+    Update werden sie beim ersten Start automatisch angepasst.
+  - Eine Sicherung aus einer NEUEREN App-Version wird ebenfalls übernommen;
+    die App weist dann darauf hin, dass du sie aktualisieren solltest.
+
+
+------------------------------------------------------------------
+TEIL I – Updates einspielen
+------------------------------------------------------------------
+
+I1. Geänderte Dateien im GitHub-Repository hochladen ("Add file" ->
+    "Upload files", gleiche Namen ersetzen die alten) -> "Commit changes"
+I2. Die Datei config.js dabei NICHT überschreiben (oder vorher wieder
+    deine Werte eintragen).
+I3. WICHTIG: In "sw.js" ganz oben die Versionsnummer erhöhen, z. B.
+      const CACHE = 'teigbuch-v1.5.0';  ->  'teigbuch-v1.5.1'
+    (Bei Updates von mir ist das schon erledigt.) Nur so erkennen die
+    Geräte, dass es eine neue Version gibt.
+I4. Nach 1–2 Minuten ist die neue Version online. Beim nächsten Öffnen
+    lädt die App sie im Hintergrund und startet sich einmal kurz neu.
+    Falls nicht: App komplett schließen und neu öffnen.
+I5. Optional prüfen, ob alte Sicherungen noch passen: im Browser
+      https://DEINNAME.github.io/teigbuch/tests/compat.html
+    öffnen – oben muss "✔ Alle … Prüfungen bestanden" stehen.
+    (Bei Updates von mir ist diese Prüfung bereits erledigt.)
+I6. Erscheint nach dem Update "📝 … braucht noch eine Angabe":
+    "Nachtragen" tippen und die Fragen beantworten (siehe Teil H).
+
+
+------------------------------------------------------------------
+TEIL J – Wenn etwas nicht klappt
+------------------------------------------------------------------
+
+"Geräte-Sync: nicht eingerichtet"
+  -> config.js enthält keine oder falsche Werte (Teil B), oder die
+     hochgeladene config.js ist noch die leere Version. Alternativ die Werte
+     direkt in der App unter "Zugangsdaten eingeben" eintragen.
+
+Es kommt keine Anmelde-E-Mail
+  -> Spam-Ordner prüfen; einige Minuten warten – Supabase verschickt im
+     Gratis-Tarif nur wenige E-Mails pro Stunde.
+
+"Link ungültig oder schon benutzt"
+  -> Jeder Link gilt nur einmal und nur kurze Zeit. Immer den Link aus der
+     NEUESTEN E-Mail nehmen und ihn kopieren statt antippen (Teil G3).
+
+Link versehentlich angetippt -> Seite "localhost" oder Fehlermeldung
+  -> Teil D erledigt? Dann einfach neue E-Mail anfordern und den Link
+     diesmal kopieren.
+
+"Keine Verbindung zu Supabase (offline oder Projekt pausiert)"
+  -> Internet prüfen. Falls das Projekt pausiert ist: supabase.com ->
+     Projekt öffnen -> "Restore project". Danach Teil E3 prüfen
+     (läuft der Wecker?). Deine Daten gehen beim Pausieren nicht verloren.
+
+"Tabelle nicht gefunden – wurde das SQL-Skript ausgeführt?"
+  -> Teil A3 wiederholen.
+
+Wecker-Lauf mit rotem ✖
+  -> Secrets aus E1 prüfen (Name exakt, keine Leerzeichen). GitHub schickt
+     außerdem eine E-Mail, falls ein Zeitplan fehlschlägt.
+
+Die App zeigt noch eine alte Version
+  -> Wurde in sw.js die Versionsnummer erhöht (Teil I3)? Dann App komplett
+     schließen und neu öffnen (ggf. zweimal).
+
+"Diese Sicherung stammt aus einer neueren Teigbuch-Version"
+  -> Die Daten wurden vollständig übernommen. Die App auf dem Gerät ist
+     älter als die, mit der gesichert wurde: neueste Dateien hochladen
+     (Teil I) und App neu öffnen.
+
+Beim Wechsel auf "Trockenhefe" kommt eine Frage
+  -> "OK" rechnet bereits eingetragene Hefemengen um (Trockenhefe ≈ ⅓
+     Frischhefe). "Abbrechen" lässt die Mengen, wie sie sind – richtig, wenn
+     du die Trockenhefe-Menge schon so eingegeben hast.
+
+iPhone: Rezepte "verschwunden"
+  -> Wurde die App in Safari statt über das Home-Bildschirm-Symbol
+     geöffnet? Beide haben getrennte Speicher. Mit Sync aktiv: einfach in
+     der installierten App anmelden – dann kommt alles wieder.
+
+Handywechsel
+  -> Mit Sync: auf dem neuen Handy Teil F + G – fertig.
+  -> Ohne Sync: Einstellungen -> Daten -> "Sichern" auf dem alten Handy,
+     "Importieren" auf dem neuen.
+
+==================================================================
+Viel Spaß beim Backen! 🍕🍞
+==================================================================

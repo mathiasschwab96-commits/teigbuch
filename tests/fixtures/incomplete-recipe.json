@@ -1,0 +1,19 @@
+{
+ "app": "Teigbuch",
+ "format": 1,
+ "recipes": [
+  {
+   "id": "incomplete1",
+   "name": "Unvollständiges Rezept",
+   "category": "unbekannt",
+   "yield": { "count": 4 },
+   "flours": [{ "name": "Tipo 00", "pct": 100 }],
+   "water": { "pct": 65 },
+   "salt": 2.5,
+   "yeastPct": 0.2,
+   "preferments": [],
+   "steps": []
+  }
+ ],
+ "logs": []
+}

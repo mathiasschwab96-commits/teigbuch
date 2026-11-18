@@ -1,0 +1,76 @@
+{
+ "app": "Teigbuch",
+ "format": 1,
+ "exportedAt": "2026-11-18T05:41:36.054Z",
+ "recipes": [
+  {
+   "id": "mwlp04vgh1sa13",
+   "name": "Bester Pizzateig mit Biga",
+   "category": "pizza",
+   "description": "48 h Biga im Kühlschrank, am Backtag ca. 3 h.",
+   "tags": ["Biga"],
+   "favorite": false,
+   "photos": [],
+   "cover": null,
+   "yield": { "mode": "flour", "count": 6, "pieceWeight": 260, "flour": 700, "loss": 0 },
+   "flours": [{ "name": "Weizenmehl 00", "pct": 100 }],
+   "water": { "pct": 71.43 },
+   "oil": { "pct": 0 },
+   "salt": 2.1429,
+   "yeastType": "dry",
+   "yeastPct": 0,
+   "extras": [],
+   "preferments": [
+    { "id": "mwlp05yb9cazd6", "type": "biga", "name": "Biga", "flourPct": 28.5714, "hydration": 50, "yeastPct": 2.5, "starterPct": 0, "starterHydration": 100, "flourName": "Weizenmehl 00" }
+   ],
+   "steps": [
+    { "id": "s1", "kind": "prep", "name": "Biga ansetzen", "durationMin": 5, "location": "rt", "temp": "", "stage": "mwlp05yb9cazd6", "notes": "", "parallel": false, "repeat": null },
+    { "id": "s2", "kind": "rest", "name": "Biga reifen", "durationMin": 2880, "location": "fridge", "temp": "4–5 °C", "stage": "mwlp05yb9cazd6", "notes": "", "parallel": false, "repeat": null },
+    { "id": "s3", "kind": "mix", "name": "Hauptteig kneten", "durationMin": 15, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "repeat": null },
+    { "id": "s4", "kind": "proof", "name": "Ballengare", "durationMin": 120, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null },
+    { "id": "s5", "kind": "bake", "name": "Pizza backen", "durationMin": 30, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null }
+   ],
+   "ddt": 23,
+   "notes": "",
+   "createdAt": 1794980431277,
+   "updatedAt": 1794980489054
+  },
+  {
+   "id": "sourdough1",
+   "name": "Weizen-Sauerteigbrot",
+   "category": "bread",
+   "description": "",
+   "tags": [],
+   "favorite": true,
+   "photos": [],
+   "cover": null,
+   "yield": { "mode": "pieces", "count": 1, "pieceWeight": 950, "flour": 500, "loss": 0 },
+   "flours": [{ "name": "Weizenmehl 550", "pct": 85 }, { "name": "Weizenvollkornmehl", "pct": 15 }],
+   "water": { "pct": 75 },
+   "oil": { "pct": 0 },
+   "salt": 2,
+   "yeastType": "fresh",
+   "yeastPct": 0,
+   "extras": [],
+   "preferments": [
+    { "id": "lv1", "type": "levain", "name": "Sauerteig", "flourPct": 10, "hydration": 100, "yeastPct": 0, "starterPct": 20, "starterHydration": 100, "flourName": "Weizenvollkornmehl" }
+   ],
+   "steps": [
+    { "id": "b1", "kind": "bulk", "name": "Stockgare mit Dehnen & Falten", "durationMin": 240, "location": "rt", "temp": "24–26 °C", "stage": null, "notes": "", "parallel": false, "repeat": { "count": 4, "intervalMin": 30 } }
+   ],
+   "ddt": 25,
+   "notes": "",
+   "createdAt": 1794900000000,
+   "updatedAt": 1794900000000
+  }
+ ],
+ "logs": [
+  {
+   "id": "log1", "recipeId": "mwlp04vgh1sa13", "date": "2026-11-15", "rating": 4, "sub": { "rim": 5 },
+   "params": { "hydration": 71.43, "salt": 2.14, "yeastPct": 0.714, "pf": "Biga 29 %", "count": 5, "pieceWeight": 244, "totalHours": 51, "flour": "Weizenmehl 00" },
+   "roomTemp": "21", "doughTemp": "24", "fridgeTemp": "5", "oven": "Ooni", "bakeTemp": "450", "bakeTime": "90 s",
+   "notes": "Sehr luftig", "nextTime": "", "photos": [], "sessionId": null, "createdAt": 1794900000000, "updatedAt": 1794900000000
+  }
+ ],
+ "photos": []
+}
