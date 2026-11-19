@@ -4,9 +4,11 @@ import * as C from './calc.js';
 import { qrSVG } from './qr.js';
 import * as sync from './sync.js';
 import * as MG from './migrate.js';
+import * as X from './extras.js';
+import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '1.6.1';
+const VERSION = '1.8.0';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -17,7 +19,7 @@ const S = {
   recipes: [], logs: [], sessions: [],
   settings: { id: 'settings', nightFrom: 23, nightTo: 7, lastBackup: 0, ddtRoom: 22, ddtFlour: 21, ddtPf: 22, ddtFriction: 3, refRoom: 22,
     features: { tempComp: true, handsFree: true, voice: true, wakeLock: true, qr: true, nightOpt: true } },
-  hands: null, undo: null, measOpen: null, importPreview: null, scanStream: null, logNewPhotos: [], searchOpen: false,
+  hands: null, ticks: new Set(), measOpen: null, ki: { input: '', answer: '', error: '' }, importPreview: null, scanStream: null, logNewPhotos: [], searchOpen: false,
   draft: null, draftOrig: null, draftNewPhotos: [], wiz: 0, openStep: null,
   logDraft: null, scale: null, plan: null, installEvt: null, listQuery: '', listFilter: 'all', sheetItems: [],
 };
@@ -142,6 +144,21 @@ async function saveSession(s) {
 }
 async function saveSettings() { await db.put('meta', S.settings); }
 
+// Erfolge: neu erreichte melden. Beim allerersten Mal (Update) still übernehmen – keine Meldungsflut.
+async function checkAchievements() {
+  const earned = X.earnedAchievements({ recipes: S.recipes, logs: S.logs });
+  if (!Array.isArray(S.settings.achSeen)) { S.settings.achSeen = earned; await saveSettings(); return []; }
+  const fresh = earned.filter((id) => !S.settings.achSeen.includes(id));
+  if (fresh.length) { S.settings.achSeen = [...S.settings.achSeen, ...fresh]; await saveSettings(); }
+  return fresh.map((id) => X.ACHIEVEMENTS.find((a) => a.id === id));
+}
+function achievementsCard() {
+  const earned = new Set(X.earnedAchievements({ recipes: S.recipes, logs: S.logs }));
+  return `<details class="card ach"><summary>🏅 Erfolge <small class="muted">${earned.size} von ${X.ACHIEVEMENTS.length}</small></summary>
+    <div class="ach-grid">${X.ACHIEVEMENTS.map((a) => `<div class="ach-i ${earned.has(a.id) ? 'on' : ''}"><span class="ach-ic">${earned.has(a.id) ? a.icon : '🔒'}</span><span><b>${esc(a.title)}</b><small>${esc(a.desc)}</small></span></div>`).join('')}</div>
+  </details>`;
+}
+
 // ---------- Router ----------
 let lastHash = null;
 function route() {
@@ -168,6 +185,7 @@ function render() {
     else if (a === 'log') out = vLog(b, c, q);
     else if (a === 'import') out = vImport(b || '');
     else if (a === 'fix') out = vFix();
+    else if (a === 'ki') out = vKi();
     else if (a === 'settings') { tab = 'settings'; out = vSettings(); }
     else out = vNotFound();
   } catch (e) {
@@ -182,9 +200,19 @@ function render() {
   badge.textContent = active || '';
   badge.hidden = !active;
   window.scrollTo(0, same ? y : 0);
+  // Abgehakte Zutaten bleiben beim Neuzeichnen abgehakt
+  if (S.ticks.size) $$('[data-action="tick"]').forEach((el) => { if (S.ticks.has(tickKey(el))) el.classList.add('checked'); });
   hydratePhotos();
   tick(true);
   out.after?.();
+}
+
+// Schlüssel für abgehakte Zutaten: Seite + Tabelle (data-tk) + Position darin + Name ohne „(8 °C)“-Zusatz
+function tickKey(el) {
+  const scope = el.closest('[data-tk]');
+  const i = scope ? $$('[data-action="tick"]', scope).indexOf(el) : -1;
+  const name = (el.firstElementChild?.firstChild?.textContent || '').replace(/\s*\(.*\)\s*$/, '');
+  return `${location.hash}|${scope?.dataset.tk || ''}|${i}|${name}`;
 }
 
 function hydratePhotos() {
@@ -395,7 +423,7 @@ function scaleInfo(r, c) {
 
 function ingTable(title, sub, rows, cls = '') {
   const total = rows.reduce((s, x) => s + (x.g || 0), 0);
-  return `<section class="ing ${cls}">
+  return `<section class="ing ${cls}" ${title ? `data-tk="${esc(title.replace(/<[^>]*>/g, ''))}"` : ''}>
     ${title ? `<h3>${title}${sub ? `<small>${sub}</small>` : ''}</h3>` : ''}
     <table>${rows.map((x) => `<tr data-action="tick"><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${fmtG(x.g)}</td></tr>`).join('')}
     <tr class="sum"><td>Summe</td><td class="num">${fmtG(total)}</td></tr></table>
@@ -414,7 +442,10 @@ function mainRows(c, yt) {
   const rows = [];
   c.pfs.forEach((x) => rows.push({ name: x.pf.name || 'Vorteig', hint: 'kompletter Vorteig', g: x.total }));
   c.main.flours.forEach((f) => { if (f.g > 0.05) rows.push({ name: f.name, g: f.g }); });
-  rows.push({ name: 'Wasser', g: Math.max(0, c.main.water) });
+  const w = Math.max(0, c.main.water), ice = Math.min(w, num(c.main.ice));
+  const wt = c.main.waterTemp;
+  rows.push({ name: wt !== undefined && wt !== '' ? `Wasser (${fmtNum(wt)} °C)` : 'Wasser', g: w - ice });
+  if (ice > 0) rows.push({ name: 'Eis', hint: 'ersetzt einen Teil des Wassers', g: ice });
   if (c.main.salt > 0) rows.push({ name: 'Salz', g: c.main.salt });
   if (c.main.yeast > 0) rows.push({ name: yeastName(yt), g: c.main.yeast });
   if (c.main.oil > 0) rows.push({ name: 'Öl', g: c.main.oil });
@@ -541,7 +572,7 @@ function paramChips(pr, plain = false) {
 function logCard(l, r) {
   const subs = SUBRATINGS[r.category] || SUBRATINGS.other;
   const subTxt = subs.filter(([k]) => l.sub?.[k]).map(([k, lbl]) => `${lbl} ${l.sub[k]}/5`).join(' · ');
-  const cond = [l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.fridgeTemp && `Kühlschrank ${esc(l.fridgeTemp)} °C`, l.oven && esc(l.oven), l.bakeTemp && `${esc(l.bakeTemp)} °C`, l.bakeTime && esc(l.bakeTime)].filter(Boolean).join(' · ');
+  const cond = [l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.fridgeTemp && `Kühlschrank ${esc(l.fridgeTemp)} °C`, l.waterTemp && `Wasser ${esc(l.waterTemp)} °C`, l.iceG && `Eis ${esc(l.iceG)} g`, l.oven && esc(l.oven), l.bakeTemp && `${esc(l.bakeTemp)} °C`, l.bakeTime && esc(l.bakeTime)].filter(Boolean).join(' · ');
   const hyd = num(l.params?.hydration);
   return `<details class="card log">
     <summary><span class="log-d">${fmtDate(l.date)}</span>${hyd ? `<span class="log-h">💧 ${fmtPct(hyd)}</span>` : ''}<span class="grow"></span>${l.rating ? stars(l.rating) : '<small class="muted">–</small>'}</summary>
@@ -624,11 +655,53 @@ function vEdit(id) {
   return { html, after: liveDraft };
 }
 
+// ---------- Rezept aus Bild / Link / Text (KI-Brücke) ----------
+function vKi() {
+  const k = S.ki;
+  const share = typeof navigator.share === 'function';
+  return { html: `
+  <header class="top sub"><a class="icon-btn" href="#/edit/new" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Neues Rezept</div><h1 class="title sm">Aus Bild, Link oder Text</h1></div></header>
+  <div class="pad">
+    <section class="card">
+      <div class="card-h"><b>① Auftrag an die KI</b></div>
+      ${fld('Link oder Rezepttext <small class="muted">(optional)</small>', `<textarea class="in" rows="3" data-input="kiInput" placeholder="https://… oder Text, z. B. aus einer Videobeschreibung. Leer lassen, wenn du ein Foto/Screenshot anhängst.">${esc(k.input)}</textarea>`)}
+      <div class="row gap wrap">
+        <button class="btn primary" data-action="kiCopy">📋 Auftrag kopieren</button>
+        ${share ? '<button class="btn" data-action="kiShare">📤 An KI-App teilen</button>' : ''}
+      </div>
+      <ol class="small login-steps">
+        <li>Eine KI-App öffnen – z. B. ChatGPT, Claude, Gemini oder Copilot</li>
+        <li>Auftrag einfügen und <b>Foto oder Screenshot des Rezepts anhängen</b></li>
+        <li>Absenden und die <b>komplette Antwort</b> kopieren</li>
+      </ol>
+      <details class="info"><summary>ⓘ Auftrag ansehen</summary><textarea class="in mono" rows="6" readonly id="ki-prompt">${esc(KI.buildPrompt(k.input))}</textarea></details>
+    </section>
+    <section class="card">
+      <div class="card-h"><b>② Antwort einfügen</b></div>
+      <textarea class="in mono" rows="5" id="ki-answer" data-input="kiAnswer" placeholder="Antwort der KI hier einfügen (der Teil in { … } genügt)">${esc(k.answer)}</textarea>
+      ${navigator.clipboard?.readText ? '<button class="btn sm ghost" data-action="kiPaste">📋 Aus Zwischenablage einfügen</button>' : ''}
+      ${k.error ? `<div class="hint-card warnc small"><div>⚠️ ${esc(k.error)}</div></div>` : ''}
+      <button class="btn primary big block" data-action="kiCreate">✨ Rezept erstellen</button>
+      <p class="muted small" style="margin-bottom:0">Das Rezept öffnet sich zuerst im Editor – du prüfst alles und speicherst erst dann.</p>
+    </section>
+    <details class="card"><summary>Tipps &amp; Hinweise</summary>
+      <ul class="small">
+        <li><b>Videos:</b> Die meisten KIs können Videos nicht ansehen. Kopiere die Videobeschreibung oder mache Screenshots der Zutaten-Einblendungen.</li>
+        <li><b>Links:</b> Nicht jede KI kann Webseiten öffnen. Klappt es nicht: Screenshots der Zutaten und Schritte anhängen.</li>
+        <li><b>Mehrere Bilder</b> (Zutaten + Zubereitung) kannst du in den meisten KI-Apps gemeinsam anhängen.</li>
+        <li>KIs machen Fehler – Mengen und Zeiten im Editor kurz gegenprüfen.</li>
+        <li>Bild und Text gehen an den Anbieter der gewählten KI-App, nicht an Teigbuch. Schick dort nichts Vertrauliches mit.</li>
+      </ul>
+    </details>
+  </div>` };
+}
+
 function templatePicker() {
   return { html: `
   <header class="top sub"><a class="icon-btn" href="#/" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Neues Rezept</div><h1 class="title sm">Womit startest du?</h1></div></header>
   <div class="pad">
-    <p class="muted">Wähle eine Vorlage – Mengen, Vorteig und Ablauf sind schon ausgefüllt und lassen sich Schritt für Schritt anpassen.</p>
+    <a class="tpl ki-tpl" href="#/ki"><span class="tpl-ic">📷</span><span><b>Aus Bild, Link oder Text</b><small>Screenshot, Foto, Webseite oder Videobeschreibung – eine KI deiner Wahl liest das Rezept aus.</small></span></a>
+    <p class="muted">Oder wähle eine Vorlage – Mengen, Vorteig und Ablauf sind schon ausgefüllt und lassen sich Schritt für Schritt anpassen.</p>
     <div class="tpl-grid">
       ${TEMPLATES.map((t) => `<button class="tpl" data-action="pickTpl" data-t="${t.id}"><span class="tpl-ic">${t.icon}</span><b>${t.name}</b><small>${t.desc}</small></button>`).join('')}
       <button class="tpl blank" data-action="pickBlank" data-c="pizza"><span class="tpl-ic">➕🍕</span><b>Leeres Pizzarezept</b><small>Alles selbst eingeben</small></button>
@@ -720,12 +793,23 @@ function wMenge(d) {
   </div>`;
 }
 
+// Mehl-Bibliothek: nur Hintergrundinfos (eingeklappt) + ein Hinweis, wenn Mehl und Führung nicht zusammenpassen
+function flourLib(d) {
+  const known = [...new Map((d.flours || []).map((f) => [X.flourInfo(f.name), f.name]).filter(([i]) => i)).entries()];
+  const hints = X.flourHints(d);
+  if (!known.length && !hints.length) return '';
+  return `${hints.map((h) => `<div class="hint-card warnc small"><div>🌾 ${esc(h)}</div></div>`).join('')}
+    ${known.length ? `<details class="info"><summary>ⓘ Mehl-Infos <small class="muted">${known.map(([i]) => esc(i.name)).join(', ')}</small></summary>
+      ${known.map(([i]) => `<p><b>${esc(i.name)}</b> · ca. ${esc(i.protein)} % Eiweiß${i.w !== '–' ? ` · W ${esc(i.w)}` : ''}<br><small>${esc(i.note)}</small></p>`).join('')}
+      <p class="muted small">Richtwerte – je nach Hersteller verschieden. Maßgeblich ist die Angabe auf der Packung.</p></details>` : ''}`;
+}
+
 function wMehl(d) {
   const hydHints = [[60, 'fest'], [65, 'klassisch'], [68, 'Napoli'], [70, 'luftig'], [75, 'Sauerteig'], [80, 'Teglia']];
   return `
   <div class="fld"><span class="fld-l">Mehlmischung <small class="muted">(Anteile am Gesamtmehl)</small></span>
     ${(d.flours || []).map((f, i) => `<div class="row gap line">
-      <input class="in grow" data-input="flourName" data-i="${i}" value="${esc(f.name)}" placeholder="Mehlsorte">
+      <input class="in grow" data-input="flourName" data-i="${i}" value="${esc(f.name)}" placeholder="Mehlsorte" list="flour-lib">
       <span class="unit-in w90"><input class="in" inputmode="decimal" data-bind="d.flours.${i}.pct" data-num value="${fmtIn(f.pct)}"><span class="u">%</span></span>
       ${d.flours.length > 1 ? `<button class="icon-btn" data-action="delFlour" data-i="${i}" aria-label="Entfernen">${icon('x')}</button>` : ''}
     </div>`).join('')}
@@ -734,6 +818,8 @@ function wMehl(d) {
       <div class="chips">${FLOUR_PRESETS.filter((n) => !(d.flours || []).some((f) => f.name === n)).map((n) => `<button class="chip" data-action="addFlour" data-v="${n}">${n}</button>`).join('')}<button class="chip" data-action="addFlour" data-v="">Eigenes …</button></div>
       <p class="muted small">Startet mit 20 % – wird vom ersten Mehl abgezogen, die Summe bleibt 100 %.</p>
     </details>
+    <datalist id="flour-lib">${X.FLOUR_NAMES.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div id="flour-lib-box">${flourLib(d)}</div>
   </div>
   <div class="link-card">
     <div class="link-h"><b>💧 Wasser</b><small>Gib Hydration <u>oder</u> Wassermenge ein – das andere wird berechnet.</small></div>
@@ -745,6 +831,19 @@ function wMehl(d) {
     <div class="chips">${hydHints.map(([v, l]) => `<button class="chip" data-action="setHyd" data-v="${v}">${v} % <small>${l}</small></button>`).join('')}</div>
     <div class="muted small" data-live="hydHint"></div>
   </div>
+  <details class="card" ${d.water.temp !== '' && d.water.temp !== undefined || num(d.water.icePct) > 0 ? 'open' : ''}>
+    <summary>🌡️ Wassertemperatur &amp; Eis <small class="muted">optional</small></summary>
+    <p class="muted small" style="margin-top:0">Gilt für das Wasser im Hauptteig. Eis ersetzt einen Teil davon – die Hydration bleibt gleich.</p>
+    ${fldU('Wassertemperatur', `<input class="in" inputmode="decimal" data-input="wtemp" value="${d.water.temp !== '' && d.water.temp !== undefined ? fmtIn(d.water.temp, 1) : ''}" placeholder="z. B. 8">`, '°C')}
+    <div class="fld"><span class="fld-l">Davon als Eis</span>
+      <div class="link-row">
+        <span class="unit-in"><input class="in" inputmode="decimal" data-input="ice" data-unit="pct" value="${num(d.water.icePct) > 0 ? fmtIn(d.water.icePct) : ''}" placeholder="0" aria-label="Eis in Prozent des Hauptteig-Wassers"><span class="u">%</span></span>
+        <span class="link-arrow">⇄</span>
+        <span class="unit-in"><input class="in" inputmode="decimal" data-input="ice" data-unit="g" placeholder="0" aria-label="Eis in Gramm"><span class="u">g</span></span>
+      </div>
+      <small class="muted" data-live="iceHint"></small>
+    </div>
+  </details>
   <details class="card" ${num(d.oil.pct) > 0 ? 'open' : ''}>
     <summary>🫒 Öl <small class="muted">optional</small></summary>
     <div class="link-row">
@@ -904,6 +1003,7 @@ function liveDraft() {
     summary: liveSummary(c, d), dough: fmtG(c.D), flour: fmtG(c.F), count: fmtNum(c.count, 1),
     blendSum: `${fmtNum(blendSum)} %${Math.abs(blendSum - 100) > 0.5 ? ' ⚠️' : ' ✓'}`,
     hydHint: hydHint(c.totals.hydration), hydOil: fmtPct(c.totals.hydrationOil),
+    iceHint: c.main.ice > 0 ? `Hauptteig: ${fmtG(Math.max(0, c.main.water) - c.main.ice)} Wasser + ${fmtG(c.main.ice)} Eis` : `Wasser im Hauptteig: ${fmtG(Math.max(0, c.main.water))}`,
     salt: fmtG(c.totals.salt),
     yeast: `${fmtG(c.main.yeast)} im Hauptteig · gesamt ${fmtG(c.totals.yeast)}`,
     total: d.steps?.length ? fmtDur(info.total) : '–', bakeOff: d.steps?.length ? fmtDur(info.bakeOff) : '–',
@@ -923,6 +1023,11 @@ function liveDraft() {
     if (el === document.activeElement) return;
     const f = el.dataset.link;
     el.value = el.dataset.unit === 'pct' ? fmtIn(d[f].pct) : fmtIn(f === 'water' ? c.totals.water : c.totals.oil, 0);
+  });
+  $$('input[data-input="ice"]').forEach((el) => {
+    if (el === document.activeElement) return;
+    const has = num(d.water.icePct) > 0;
+    el.value = !has ? '' : el.dataset.unit === 'pct' ? fmtIn(d.water.icePct) : fmtIn(c.main.ice, 0);
   });
   // Mengenfelder: Gegenwert anzeigen (g bzw. %), Gramm-Felder nachführen
   $$('[data-gram]').forEach((el) => {
@@ -972,15 +1077,26 @@ function vPlan(id) {
     ${night.length ? `<div class="hint-card warnc"><div>🌙 <b>${night.length} Schritt${night.length > 1 ? 'e' : ''} in der Nacht</b><br><small>${night.slice(0, 3).map((s) => `${new Intl.DateTimeFormat('de-DE', { weekday: 'short' }).format(s.start)} ${fmtTime(s.start)}`).join(' · ')}${night.length > 3 ? ' …' : ''}</small></div>
       ${feat('nightOpt') ? '<button class="btn sm primary" data-action="nightOpt">🪄 Anpassen</button>' : ''}</div>` : ''}
     ${hasAdj ? `<div class="hint-card good"><div>🪄 ${steps.filter((s) => s._adj).map((s) => `${esc(s.name)} ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`).join(' · ')}</div><button class="btn sm ghost" data-action="nightReset">Zurück</button></div>` : ''}
-    <details class="card" ${P.adjOpen ? 'open' : ''} data-action-toggle="adj">
-      <summary>Menge &amp; Anpassungen <small class="muted">${(P.ov.ymode || r.yield.mode) === 'flour' ? `${fmtNum(P.ov.flour, 0)} g Mehl` : `${fmtNum(P.ov.count, 0)} × ${fmtNum(P.ov.pieceWeight, 0)} g`} · ${fmtPct(P.ov.hydration)}${P.ov.room !== undefined && P.ov.room !== '' ? ` · ${fmtNum(P.ov.room)} °C` : ''}</small></summary>
+    <section class="card scaler">
+      <div class="card-h"><b>Menge für diesen Backtag</b></div>
+      <div class="seg small" style="margin:0 0 10px">${[['pieces', cat.pieces], ['flour', 'Mehl']].map(([k, l]) => `<button class="${(P.ov.ymode === 'flour' ? 'flour' : 'pieces') === k ? 'on' : ''}" data-action="planYMode" data-v="${k}">${l}</button>`).join('')}</div>
+      ${P.ov.ymode === 'flour'
+        ? `<div class="scaler-row"><span class="unit-in"><input class="in" inputmode="decimal" data-change="planOv" data-k="flour" value="${fmtIn(P.ov.flour, 0)}" aria-label="Mehl"><span class="u">g Mehl</span></span></div>`
+        : `<div class="scaler-row">
+          <div class="stepper"><button data-action="planCount" data-d="-1" aria-label="weniger">−</button><input class="in" inputmode="numeric" data-change="planOv" data-k="count" value="${fmtIn(P.ov.count, 0)}" aria-label="Anzahl"><button data-action="planCount" data-d="1" aria-label="mehr">+</button></div>
+          <span class="x">×</span>
+          <span class="unit-in"><input class="in" inputmode="decimal" data-change="planOv" data-k="pieceWeight" value="${fmtIn(P.ov.pieceWeight, 0)}" aria-label="Gewicht pro ${cat.piece}"><span class="u">g</span></span>
+        </div>`}
+      <div class="muted small" style="margin-top:8px">${scaleInfo(r, c)}</div>
+      <small class="muted">Zeiten und Temperaturen bleiben gleich · das Rezept selbst bleibt unverändert.</small>
+    </section>
+    <details class="card fold" ${P.adjOpen ? 'open' : ''} data-action-toggle="adj">
+      <summary>Weitere Anpassungen <small class="muted">${fmtPct(P.ov.hydration)} Hydration${P.ov.room !== undefined && P.ov.room !== '' ? ` · ${fmtNum(P.ov.room)} °C` : ''}</small></summary>
       <p class="muted small" style="margin-top:0">Gilt nur für diesen Backtag und landet später im Tagebuch.</p>
       <div class="grid2">
-        ${(P.ov.ymode || r.yield.mode) === 'flour' ? fldU('Mehl', `<input class="in" inputmode="decimal" data-change="planOv" data-k="flour" value="${fmtIn(P.ov.flour, 0)}">`, 'g') : `${fldU(cat.pieces, `<input class="in" inputmode="numeric" data-change="planOv" data-k="count" value="${fmtIn(P.ov.count, 0)}">`, 'Stk')}${fldU('Gewicht', `<input class="in" inputmode="decimal" data-change="planOv" data-k="pieceWeight" value="${fmtIn(P.ov.pieceWeight, 0)}">`, 'g')}`}
         ${fldU('Hydration', `<input class="in" inputmode="decimal" data-change="planOv" data-k="hydration" value="${fmtIn(P.ov.hydration)}">`, '%')}
         ${feat('tempComp') ? fldU('Raumtemperatur', `<input class="in" inputmode="decimal" data-change="planOv" data-k="room" value="${P.ov.room !== undefined && P.ov.room !== '' ? fmtIn(P.ov.room, 1) : ''}" placeholder="${fmtIn(S.settings.refRoom, 1)}">`, '°C', 'Gare-Zeiten werden angepasst') : ''}
       </div>
-      <div class="muted small">Mehl ${fmtG(c.F)} · Wasser ${fmtG(c.totals.water)} · Teig ${fmtG(c.D)}</div>
     </details>
     <h3 class="sec">Zeitplan</h3>
     <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '')).join('')}
@@ -1113,7 +1229,8 @@ function vSession(sid) {
   } else if (done) {
     heroHtml = `<div class="hero-timer done"><div class="ht-big">🎉</div><div class="ht-name">Fertig – guten Appetit!</div><p>Wie ist es geworden? Halte es im Tagebuch fest, solange du es noch frisch im Kopf hast.</p>
       ${r ? `<a class="btn primary big block" href="#/log/${s.recipeId}/new?session=${s.id}">📓 Tagebuch-Eintrag erstellen</a>` : ''}
-      <button class="btn ghost block" data-action="sessFinish" data-id="${s.id}">Ohne Eintrag abschließen</button></div>`;
+      <button class="btn ghost block" data-action="sessFinish" data-id="${s.id}">Ohne Eintrag abschließen</button>
+      <button class="btn ghost sm" data-action="stepBack" data-id="${s.id}">↶ Letzten Schritt wieder öffnen</button></div>`;
   } else if (planned) {
     heroHtml = `<div class="hero-timer planned"><div class="ht-step">Geplant · Start ${fmtRel(cur.start)}</div><div class="ht-name">${kindOf(cur.kind).icon} ${esc(cur.name)}</div>
       <div class="ht-cd" data-cd="${cur.start}" data-cd-mode="bare"></div><div class="ht-sub">bis zum Start</div>
@@ -1137,8 +1254,8 @@ function vSession(sid) {
       ${rep}
       ${cur.notes ? `<div class="ht-notes">${esc(cur.notes)}</div>` : ''}
       ${measBox(s, cur)}
-      <button class="btn primary big block" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}">${icon('check')} ${next ? `Weiter: ${esc(next.name)}` : 'Fertig'}</button>
       <div class="ht-tools">
+        ${hasDone(s) ? `<button class="btn sm" data-action="stepBack" data-id="${s.id}" aria-label="Einen Schritt zurück">↶ Zurück</button>` : ''}
         <button class="btn sm" data-action="stepShift" data-id="${s.id}" data-i="${cur.i}" data-min="-15">−15</button>
         <button class="btn sm" data-action="stepShift" data-id="${s.id}" data-i="${cur.i}" data-min="15">+15</button>
         <button class="btn sm" data-action="stepShift" data-id="${s.id}" data-i="${cur.i}" data-min="60">+1 h</button>
@@ -1146,28 +1263,69 @@ function vSession(sid) {
       </div>
     </div>`;
   }
-  const stg = cur?.stage ? stageRows(s.calc, cur.stage, s.yeastType) : null;
+  // Laufender Schritt: Zutaten (nur beim Vermengen) und darunter der Weiter-Knopf
+  let goHtml = '';
+  if (s.status === 'active' && cur && !planned) {
+    const stg = stepIngredients(s, cur);
+    const next = tl.slice(cur.i + 1).find((x) => !x.doneAt);
+    goHtml = `${stg ? `<section class="card step-ing" data-tk="${s.id}:${cur.i}"><div class="card-h"><b>🧾 Zutaten: ${esc(stg.title)}</b><small class="muted">antippen zum Abhaken</small></div>${ingTable('', '', stg.rows)}</section>` : ''}
+      <button class="btn primary big block step-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}">${icon('check')} ${next ? `Weiter: ${esc(next.name)}` : 'Fertig'}</button>`;
+  }
   const html = `
   <header class="top sub"><a class="icon-btn" href="#/bake" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Backvorgang</div><h1 class="title sm">${esc(s.recipeName)}</h1></div>
     <button class="icon-btn" data-action="sessMenu" data-id="${s.id}" aria-label="Mehr">${icon('more')}</button></header>
   <div class="pad">
     ${s.status === 'active' ? notifCard() : ''}
     ${heroHtml}
+    ${goHtml}
     <div class="result-grid">
       <div><small>🔥 Backen</small><b>${fmtRel(info.bakeAt)}</b></div>
       <div><small>🎉 Fertig</small><b>${fmtRel(info.endAt)}</b></div>
     </div>
-    ${stg && s.status === 'active' ? `<details class="card" open><summary>🧾 Zutaten: ${esc(stg.title)} <small class="muted">antippen zum Abhaken</small></summary>${ingTable('', '', stg.rows)}</details>` : ''}
     <h3 class="sec">Ablauf</h3>
-    <ol class="tl live">${tl.map((x) => {
+    <ol class="tl tl-live">${tl.map((x) => {
       const isRun = !x.doneAt && x.start <= now && s.status === 'active';
       const when = x.doneAt ? `✓ ${fmtTime(x.doneAt)}` : fmtRel(x.start);
       return stepRow(x, when, r, `${x.doneAt ? 'done' : ''} ${isRun ? 'run' : ''} ${!x.doneAt && x.end < now && isRun ? 'over' : ''}`,
         isRun && x.i !== cur?.i ? `<button class="icon-btn tl-done" data-action="stepDone" data-id="${s.id}" data-i="${x.i}" aria-label="Erledigt">${icon('check')}</button>` : '');
     }).join('')}</ol>
-    <details class="card"><summary>Alle Zutaten <small class="muted">${s.calc.mode === 'flour' ? fmtG(s.calc.F) + ' Mehl' : `${fmtNum(s.calc.count, 0)} × ${fmtNum(s.calc.pieceWeight, 0)} g`} · ${fmtPct(s.calc.totals.hydration)}</small></summary>${ingredientBlocks(s.calc, s.yeastType, true)}</details>
+    <details class="card"><summary>Alle Zutaten <small class="muted">${s.calc.mode === 'flour' ? fmtG(s.calc.F) + ' Mehl' : `${fmtNum(s.calc.count, 0)} × ${fmtNum(s.calc.pieceWeight, 0)} g`} · ${fmtPct(s.calc.totals.hydration)}</small></summary>${ingredientBlocks(sessCalc(s), s.yeastType, true)}</details>
   </div>`;
   return { html };
+}
+
+async function finishStep(s, i, hands) {
+  if (s.steps[i].doneAt) return render();
+  s.steps[i].doneAt = Date.now();
+  await saveSession(s);
+  if (hands) {
+    const next = planInfo(effSteps(s), s.startAt, Date.now()).tl.find((x) => !x.doneAt);
+    speak(next ? `Jetzt: ${next.name}. ${speakDur(next.durationMin)}.` : 'Fertig. Guten Appetit!');
+  }
+  render();
+}
+const hasDone = (s) => s.steps.some((x) => x.doneAt);
+// Zutaten nur bei Schritten zeigen, in denen tatsächlich etwas vermengt wird
+const MIX_KINDS = new Set(['prep', 'autolyse', 'mix']);
+function stepIngredients(s, st) {
+  if (!st || !MIX_KINDS.has(st.kind)) return null;
+  const stage = st.stage || (st.kind === 'mix' ? 'main' : null);
+  return stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
+}
+// Mengen des Backvorgangs – mit heute notierter Wassertemperatur/Eis-Menge
+// Heute notierte Wasser/Eis-Werte aus ALLEN Hauptteig-Mischschritten ('' = bewusst leer)
+function waterOverrides(s) {
+  const o = {};
+  s.steps.forEach((x) => { if (isMainMix(x) && x.meas) ['water', 'ice'].forEach((k) => { if (x.meas[k] !== undefined) o[k] = x.meas[k]; }); });
+  return o;
+}
+function sessCalc(s) {
+  const o = waterOverrides(s);
+  if (!Object.keys(o).length) return s.calc;
+  const c = structuredClone(s.calc);
+  if ('water' in o) c.main.waterTemp = o.water;
+  if ('ice' in o) c.main.ice = Math.min(Math.max(0, c.main.water), Math.max(0, num(o.ice)));
+  return c;
 }
 
 // ---------- Teighände-Modus ----------
@@ -1175,8 +1333,7 @@ function vHands(s) {
   const now = Date.now();
   const tl = planInfo(effSteps(s), s.startAt, now).tl;
   const cur = tl.find((x) => !x.doneAt);
-  const undo = S.undo && S.undo.sid === s.id && now - S.undo.t < 8000
-    ? `<button class="hands-small" data-action="undoStep">↶ Rückgängig</button>` : '';
+  const undo = hasDone(s) ? `<button class="hands-small" data-action="stepBack" data-id="${s.id}">↶ Zurück</button>` : '';
   const top = (label) => `<div class="hands-top"><span>${label}</span><button class="hands-x" data-action="handsExit" aria-label="Teighände-Modus beenden">${icon('x')}</button></div>`;
   let body;
   if (!cur) {
@@ -1188,7 +1345,7 @@ function vHands(s) {
       <button class="hands-go" data-action="sessStartNow" data-id="${s.id}">▶ Jetzt starten</button>`;
   } else {
     const next = tl.slice(cur.i + 1).find((x) => !x.doneAt);
-    const stg = cur.stage ? stageRows(s.calc, cur.stage, s.yeastType) : null;
+    const stg = stepIngredients(s, cur);
     let rep = '';
     if (cur.repeat?.count > 0 && cur.repeat.intervalMin > 0) {
       const iv = cur.repeat.intervalMin * 60000;
@@ -1201,7 +1358,7 @@ function vHands(s) {
       <div class="progress big"><i data-prog="${cur.start},${cur.end}"></i></div>
       ${compNote(cur)}${rep}
       ${cur.notes ? `<div class="hands-notes">${esc(cur.notes)}</div>` : ''}
-      ${stg ? `<div class="hands-ing">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
+      ${stg ? `<div class="hands-ing" data-tk="${s.id}:${cur.i}">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
       <div class="grow"></div>
       ${next ? `<div class="hands-sub">Danach: <b>${esc(next.name)}</b> · ${fmtTime(Math.max(next.start, cur.end))}</div>` : ''}
       <button class="hands-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}" data-hands="1">✓ ${next ? 'Weiter' : 'Fertig'}</button>
@@ -1238,14 +1395,26 @@ function speak(text) {
 }
 
 // ---------- Temperatur-Messwerte ----------
-const MEAS = [['dough', 'Teig'], ['room', 'Raum'], ['fridge', 'Kühlschrank']];
+const MEAS = [['dough', 'Teig', '°C'], ['room', 'Raum', '°C'], ['fridge', 'Kühlschrank', '°C']];
+// Nur beim Mischen des Hauptteigs: Wassertemperatur und Eis (vorbelegt aus dem Rezept)
+const MEAS_WATER = [['water', 'Wasser', '°C'], ['ice', 'Eis', 'g']];
+const isMainMix = (st) => MIX_KINDS.has(st?.kind) && (st.stage || (st.kind === 'mix' ? 'main' : null)) === 'main';
+function measDefaults(s) {
+  const m = s.calc?.main || {};
+  return { water: m.waterTemp !== undefined && m.waterTemp !== '' ? m.waterTemp : undefined, ice: num(m.ice) > 0 ? Math.round(m.ice) : undefined };
+}
 function measLabel(m) {
-  return MEAS.filter(([k]) => m?.[k] !== undefined && m[k] !== '').map(([k, l]) => `${l} ${fmtNum(m[k])} °C`).join(' · ');
+  return [...MEAS, ...MEAS_WATER].filter(([k]) => m?.[k] !== undefined && m[k] !== '').map(([k, l, u]) => `${l} ${fmtNum(m[k])} ${u}`).join(' · ');
 }
 function measBox(s, cur) {
   const m = s.steps[cur.i].meas || {};
-  return `<details class="meas" data-meas="${s.id}:${cur.i}" ${S.measOpen === `${s.id}:${cur.i}` ? 'open' : ''}><summary>🌡️ <span id="meas-sum">${measLabel(m) || 'Temperatur notieren'}</span></summary>
-    <div class="meas-row">${MEAS.map(([k, l]) => `<label><small>${k === 'dough' ? 'Teig (z. B. nach Kneten)' : l}</small><span class="unit-in"><input class="in" inputmode="decimal" data-change="meas" data-id="${s.id}" data-i="${cur.i}" data-k="${k}" value="${m[k] !== undefined ? fmtIn(m[k], 1) : ''}"><span class="u">°C</span></span></label>`).join('')}</div>
+  const water = isMainMix(cur);
+  const def = water ? measDefaults(s) : {};
+  const fields = water ? [...MEAS, ...MEAS_WATER] : MEAS;
+  const shown = { ...def, ...(water ? waterOverrides(s) : {}), ...m };
+  return `<details class="meas" data-meas="${s.id}:${cur.i}" ${S.measOpen === `${s.id}:${cur.i}` ? 'open' : ''}><summary>🌡️ <span id="meas-sum">${measLabel(m) || (water ? 'Temperaturen &amp; Wasser notieren' : 'Temperatur notieren')}</span></summary>
+    <div class="meas-row">${fields.map(([k, l, u]) => `<label><small>${k === 'dough' ? 'Teig (z. B. nach Kneten)' : k === 'water' ? 'Wassertemperatur' : k === 'ice' ? 'davon Eis' : l}</small><span class="unit-in"><input class="in" inputmode="decimal" data-change="meas" data-id="${s.id}" data-i="${cur.i}" data-k="${k}" value="${shown[k] !== undefined && shown[k] !== '' ? fmtIn(shown[k], k === 'ice' ? 0 : 1) : ''}"><span class="u">${u}</span></span></label>`).join('')}</div>
+    ${water && (def.water !== undefined || def.ice !== undefined) ? '<small class="muted">Wasser/Eis sind aus dem Rezept vorbelegt – ändere sie, falls du es heute anders machst.<br></small>' : ''}
     <small class="muted">Wird automatisch ins Tagebuch übernommen.${feat('tempComp') ? ' Die Raumtemperatur passt die Garzeiten an.' : ''}</small>
   </details>`;
 }
@@ -1260,7 +1429,12 @@ function sessTemps(s) {
   const vals = (k) => s.steps.map((x) => x.meas?.[k]).filter((v) => v !== undefined && v !== '').map(num);
   const avg = (a) => (a.length ? fmtIn(a.reduce((x, y) => x + y, 0) / a.length, 1) : '');
   const doughStep = s.steps.find((x) => x.meas?.dough && (x.kind === 'mix' || x.kind === 'autolyse')) || s.steps.find((x) => x.meas?.dough);
-  return { doughTemp: doughStep ? fmtIn(doughStep.meas.dough, 1) : '', roomTemp: avg(vals('room')), fridgeTemp: avg(vals('fridge')) };
+  // Wasser/Eis: heute notierter Wert, sonst der Rezept-Wert (sofern der Backvorgang einen Hauptteig-Mischschritt hat)
+  const mixStep = s.steps.find(isMainMix);
+  const wm = { ...(mixStep ? measDefaults(s) : {}), ...waterOverrides(s) };
+  const opt = (v, d) => (v !== undefined && v !== '' ? fmtIn(v, d) : '');
+  return { doughTemp: doughStep ? fmtIn(doughStep.meas.dough, 1) : '', roomTemp: avg(vals('room')), fridgeTemp: avg(vals('fridge')),
+    waterTemp: opt(wm.water, 1), iceG: opt(wm.ice, 0) };
 }
 
 // ---------- Tagebuch-Eintrag ----------
@@ -1278,7 +1452,7 @@ function vLog(rid, lid, q) {
       const sess = q.get('session') ? sessById(q.get('session')) : null;
       S.logDraft = {
         id: uid(), recipeId: rid, date: todayISO(), rating: 0, sub: {}, params: paramsFrom(r, sess),
-        roomTemp: '', doughTemp: '', fridgeTemp: '', oven: '', bakeTemp: '', bakeTime: '', notes: '', nextTime: '', photos: [],
+        roomTemp: '', doughTemp: '', fridgeTemp: '', waterTemp: '', iceG: '', oven: '', bakeTemp: '', bakeTime: '', notes: '', nextTime: '', photos: [],
         sessionId: sess?.id || null, createdAt: Date.now(),
         ...sessTemps(sess),
       };
@@ -1320,12 +1494,14 @@ function vLog(rid, lid, q) {
       ${fld('Mehl', lb('params.flour', l.params.flour))}
     </div>
     </details>
-    <details class="card"><summary>Temperaturen &amp; Ofen <small class="muted">${[l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.oven && esc(l.oven)].filter(Boolean).join(' · ') || 'optional'}</small></summary>
-    ${l.sessionId && (l.doughTemp || l.roomTemp || l.fridgeTemp) ? '<p class="muted small" style="margin-top:0">🌡️ Aus den Messwerten des Backvorgangs.</p>' : ''}
+    <details class="card"><summary>Temperaturen &amp; Ofen <small class="muted">${[l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.waterTemp && `Wasser ${esc(l.waterTemp)} °C`, l.iceG && `Eis ${esc(l.iceG)} g`, l.oven && esc(l.oven)].filter(Boolean).join(' · ') || 'optional'}</small></summary>
+    ${l.sessionId && (l.doughTemp || l.roomTemp || l.fridgeTemp || l.waterTemp || l.iceG) ? '<p class="muted small" style="margin-top:0">🌡️ Aus den Messwerten des Backvorgangs.</p>' : ''}
     <div class="grid2">
       ${fldU('Teig nach Kneten', lb('doughTemp', l.doughTemp, 'inputmode="decimal"'), '°C')}
       ${fldU('Raum', lb('roomTemp', l.roomTemp, 'inputmode="decimal"'), '°C')}
       ${fldU('Kühlschrank', lb('fridgeTemp', l.fridgeTemp, 'inputmode="decimal"'), '°C')}
+      ${fldU('Wassertemperatur', lb('waterTemp', l.waterTemp ?? '', 'inputmode="decimal"'), '°C')}
+      ${fldU('davon Eis', lb('iceG', l.iceG ?? '', 'inputmode="decimal"'), 'g')}
       ${fld('Ofen', lb('oven', l.oven, `placeholder="${r.category === 'bread' ? 'z. B. Backofen + Gusstopf' : 'z. B. Ooni Koda 16'}"`))}
       ${fldU('Backtemperatur', lb('bakeTemp', l.bakeTemp, 'inputmode="decimal"'), '°C')}
       ${fld('Backzeit', lb('bakeTime', l.bakeTime, 'placeholder="z. B. 90 s / 45 min"'))}
@@ -1381,6 +1557,7 @@ function vSettings() {
       ${feat('tempComp') ? `<div class="sub-opt">${fldU('Rezepte sind ausgelegt für', `<input class="in" inputmode="decimal" data-bind="set.refRoom" data-num value="${fmtIn(st.refRoom, 1)}">`, '°C', 'Gilt, wenn im Schritt keine Temperatur steht.')}</div>` : ''}
       ${toggle('handsFree', '🙌 Teighände-Modus', 'Große Ansicht zum Bedienen mit Teig an den Fingern.')}
       ${feat('handsFree') ? `<div class="sub-opt">${toggle('voice', '🔊 Sprachansagen', 'Sagt im Teighände-Modus den nächsten Schritt an.')}${toggle('wakeLock', '💡 Bildschirm anlassen', 'Verhindert im Teighände-Modus das Abschalten des Displays.')}</div>` : ''}
+      ${toggle('confirmEarly', '⏳ Vorzeitiges Weiter bestätigen', 'Fragt nach, wenn ein Schritt noch läuft und du schon weiter tippst.')}
       ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
       ${toggle('nightOpt', '🪄 Nachtruhe-Optimierer', 'Schlägt angepasste Kühlschrankzeiten vor.')}
       <div class="set-row"><span><b>🌙 Nachtruhe</b><br><small class="muted">Planer warnt in dieser Zeit</small></span>
@@ -1404,6 +1581,7 @@ function vSettings() {
         <p class="small muted" id="storage-info"></p>
       </details>
     </section>
+    ${achievementsCard()}
     <p class="muted center small">Teigbuch ${VERSION} · offline · ohne Werbung</p>
   </div>`;
   return {
@@ -1761,11 +1939,13 @@ function tick(silent) {
 }
 
 // ---------- Sheet ----------
-function sheet(title, items) {
+// msg (optional, HTML): kurzer Text unter dem Titel, z. B. für Rückfragen
+function sheet(title, items, msg = '') {
   S.sheetItems = items;
   $('#sheet-root').innerHTML = `<div class="sheet-bg" data-action="sheetClose"></div><div class="sheet" role="dialog" aria-label="${esc(title)}">
     <div class="sheet-h">${esc(title)}</div>
-    ${items.map((it, i) => `<button class="sheet-i ${it.danger ? 'danger' : ''}" data-action="sheetPick" data-i="${i}">${it.icon ? icon(it.icon) : ''}<span>${it.label}</span></button>`).join('')}
+    ${msg ? `<div class="sheet-msg">${msg}</div>` : ''}
+    ${items.map((it, i) => `<button class="sheet-i ${it.danger ? 'danger' : ''} ${it.primary ? 'primary' : ''}" data-action="sheetPick" data-i="${i}">${it.icon ? icon(it.icon) : ''}<span>${it.label}</span></button>`).join('')}
     <button class="sheet-i cancel" data-action="sheetClose">Abbrechen</button></div>`;
 }
 const closeSheet = () => {
@@ -1781,7 +1961,11 @@ const A = {
   fav: async (el) => { const r = byId(el.dataset.id); r.favorite = !r.favorite; await saveRecipe(r); render(); },
   sheetClose: (el) => { closeSheet(); if (el.dataset.keep) location.hash = el.getAttribute('href'); },
   sheetPick: (el) => { const it = S.sheetItems[+el.dataset.i]; closeSheet(); it?.run(); },
-  tick: (el) => el.classList.toggle('checked'),
+  tick: (el) => {
+    const on = el.classList.toggle('checked');
+    const k = tickKey(el);
+    if (on) S.ticks.add(k); else S.ticks.delete(k);
+  },
   viewPhoto: async (el) => {
     const u = await db.photoURL(el.dataset.id);
     if (!u) return;
@@ -1834,9 +2018,10 @@ const A = {
     if (to === 'flour') S.scale.yield = { ...y, mode: 'flour', flour: Math.round(c.F) };
     else {
       // Sinnvolle Startwerte: vorhandenes Stückgewicht nutzen, sonst gleichmäßig auf 4 Stück verteilen
+      const net = c.D / (1 + num(r.yield.loss) / 100); // ohne Verlust-Zuschlag
       const pw = num(r.yield.pieceWeight) > 0 && r.yield.mode !== 'flour' ? num(r.yield.pieceWeight) : 0;
-      const count = pw ? Math.max(1, Math.round(c.D / pw)) : 4;
-      S.scale.yield = { ...y, mode: 'pieces', count, pieceWeight: pw || Math.round(c.D / count) };
+      const count = pw ? Math.max(1, Math.round(net / pw)) : 4;
+      S.scale.yield = { ...y, mode: 'pieces', count, pieceWeight: pw || Math.round(net / count) };
     }
     render();
   },
@@ -1844,6 +2029,36 @@ const A = {
   scaleSave: async () => { const r = S.scale && byId(S.scale.id); if (!r) return render(); r.yield = { ...S.scale.yield }; await saveRecipe(r); S.plan = null; toast('✓ Menge gespeichert'); render(); },
 
   editAt: (el) => { const id = el.dataset.id || route().parts[1]; discardDraft(); S.wizStart = +el.dataset.step; location.hash = `#/edit/${id}`; },
+  kiCopy: async () => {
+    const t = KI.buildPrompt(S.ki.input);
+    try { await navigator.clipboard.writeText(t); toast('✓ Auftrag kopiert – jetzt in der KI-App einfügen'); }
+    catch { const p = $('#ki-prompt'); if (p) { p.closest('details').open = true; p.select(); } toast('Bitte den Auftrag unten markieren und kopieren'); }
+  },
+  kiShare: async () => {
+    try { await navigator.share({ text: KI.buildPrompt(S.ki.input) }); } catch (e) { if (e.name !== 'AbortError') A.kiCopy(); }
+  },
+  kiPaste: async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) { S.ki.answer = t; S.ki.error = ''; render(); } else toast('Zwischenablage ist leer'); }
+    catch { toast('Kein Zugriff auf die Zwischenablage – bitte lange ins Feld tippen → Einfügen'); }
+  },
+  kiCreate: () => {
+    const k = S.ki;
+    k.answer = $('#ki-answer')?.value ?? k.answer;
+    if (!k.answer.trim()) { k.error = 'Bitte zuerst die Antwort der KI einfügen.'; render(); return; }
+    try {
+      const { recipe, warnings } = KI.kiToRecipe(KI.extractJSON(k.answer), { schema: MG.SCHEMA });
+      if (!recipe.source && /^https?:\/\/\S+$/i.test(k.input.trim())) recipe.source = k.input.trim();
+      // Wie jede Datei von außen: bereinigen über den gemeinsamen Importweg
+      const { rec } = importRecipe(recipe);
+      if (!rec.name) rec.name = '';
+      discardDraft();
+      S.draft = rec;
+      S.ki = { input: '', answer: '', error: '' };
+      startDraft();
+      location.hash = '#/edit/new';
+      toast(warnings.length ? `✓ Rezept erkannt – ${warnings[0]}` : '✓ Rezept erkannt – bitte kurz prüfen und speichern', warnings.length ? 6000 : 3500);
+    } catch (e) { k.error = e.message; render(); }
+  },
   pickTpl: (el) => { const t = TEMPLATES.find((x) => x.id === el.dataset.t); discardDraft(); S.draft = t.build(); startDraft(); },
   pickBlank: (el) => { discardDraft(); S.draft = C.blankRecipe(el.dataset.c); startDraft(); },
   wizGo: (el) => { S.wiz = +el.dataset.i; render(); },
@@ -1963,6 +2178,22 @@ const A = {
   },
 
   planMode: (el) => { S.plan.mode = el.dataset.v; render(); },
+  planCount: (el) => { if (!S.plan) return render(); S.plan.ov.count = Math.max(1, num(S.plan.ov.count) + +el.dataset.d); render(); },
+  planYMode: (el) => {
+    const r = S.plan && byId(S.plan.id);
+    if (!r) return render();
+    const o = S.plan.ov, to = el.dataset.v;
+    if ((o.ymode === 'flour' ? 'flour' : 'pieces') === to) return;
+    const c = calc(r, planOv(r));
+    if (to === 'flour') Object.assign(o, { ymode: 'flour', flour: Math.round(c.F) });
+    else {
+      const net = c.D / (1 + num(r.yield.loss) / 100); // ohne Verlust-Zuschlag
+      const pw = num(o.pieceWeight) > 0 ? num(o.pieceWeight) : num(r.yield.pieceWeight);
+      const count = pw > 0 ? Math.max(1, Math.round(net / pw)) : 4;
+      Object.assign(o, { ymode: 'pieces', count, pieceWeight: pw > 0 ? pw : Math.round(net / count) });
+    }
+    render();
+  },
   nightOpt: () => {
     const r = S.plan && byId(S.plan.id);
     if (!r) return render();
@@ -2001,23 +2232,34 @@ const A = {
     toast(startAt > Date.now() + 60000 ? '✓ Plan aktiviert – du wirst zum Start erinnert' : '✓ Los geht’s!');
   },
 
-  stepDone: async (el) => {
-    const s = sessById(el.dataset.id), i = +el.dataset.i;
-    s.steps[i].doneAt = Date.now();
-    await saveSession(s);
-    if (el.dataset.hands) {
-      S.undo = { sid: s.id, i, t: Date.now() };
-      setTimeout(render, 8100);
-      const tl = planInfo(effSteps(s), s.startAt, Date.now()).tl;
-      const next = tl.find((x) => !x.doneAt);
-      speak(next ? `Jetzt: ${next.name}. ${speakDur(next.durationMin)}.` : 'Fertig. Guten Appetit!');
+  stepDone: (el) => {
+    const s = sessById(el.dataset.id), i = +el.dataset.i, hands = !!el.dataset.hands;
+    if (!s || s.steps[i]?.doneAt) return render();
+    const now = Date.now();
+    const tl = planInfo(effSteps(s), s.startAt, now).tl;
+    const cur = tl.find((x) => x.i === i);
+    const left = cur ? cur.end - now : 0;
+    if (feat('confirmEarly') && left >= 60000) {
+      const next = tl.find((x) => x.i > i && !x.doneAt);
+      sheet(`„${cur.name}“ läuft noch ${fmtDur(left / 60000)}`, [
+        { label: next ? `Ja, weiter zu „${esc(next.name)}“` : 'Ja, Backvorgang abschließen', icon: 'check', primary: true,
+          // Session frisch holen – während das Fenster offen war, kann ein Sync die Daten neu geladen haben
+          run: () => { const s2 = sessById(s.id); if (s2?.steps[i]) finishStep(s2, i, hands); } },
+      ], `Geplantes Ende: <b>${fmtRel(cur.end)}</b>. Trotzdem jetzt schon weiter?`);
+      return;
     }
-    render();
+    finishStep(s, i, hands);
   },
-  undoStep: async () => {
-    const s = sessById(S.undo?.sid);
-    if (s) { s.steps[S.undo.i].doneAt = null; await saveSession(s); }
-    S.undo = null;
+  stepBack: async (el) => {
+    const s = sessById(el.dataset.id);
+    if (!s) return render();
+    const last = s.steps.reduce((b, x, i) => (x.doneAt && (b < 0 || x.doneAt >= s.steps[b].doneAt) ? i : b), -1);
+    if (last < 0) return;
+    s.steps[last].doneAt = null;
+    if (s.status === 'done') s.status = 'active';
+    await saveSession(s);
+    toast(`↶ Schritt „${s.steps[last].name}“ wieder geöffnet`);
+    if (S.hands === s.id) speak(`Zurück: ${s.steps[last].name}.`);
     render();
   },
   handsOn: (el) => { S.hands = el.dataset.id; render(); keepAwake(true); speak('Teighände-Modus an.'); },
@@ -2087,7 +2329,8 @@ const A = {
       if (s) { s.logId = l.id; s.status = 'done'; await saveSession(s); }
     }
     S.logDraft = null;
-    toast('✓ Eintrag gespeichert');
+    const fresh = await checkAchievements();
+    toast(fresh.length ? `✓ Gespeichert · 🏅 ${fresh[0].icon} ${fresh[0].title}${fresh.length > 1 ? ` +${fresh.length - 1}` : ''}` : '✓ Eintrag gespeichert', fresh.length ? 3500 : undefined);
     location.hash = `#/r/${l.recipeId}?tab=log`;
   },
   logDelete: async () => {
@@ -2105,7 +2348,8 @@ const A = {
   bakeAgain: (el) => {
     const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l.recipeId), pr = l.params || {};
     S.plan = initPlan(r);
-    Object.assign(S.plan.ov, { hydration: pr.hydration ?? r.water.pct, count: pr.count || r.yield.count, pieceWeight: pr.pieceWeight || r.yield.pieceWeight });
+    Object.assign(S.plan.ov, { hydration: num(pr.hydration) > 0 ? num(pr.hydration) : r.water.pct });
+    if (r.yield.mode !== 'flour' && num(pr.count) > 0 && num(pr.pieceWeight) > 0) Object.assign(S.plan.ov, { ymode: 'pieces', count: Math.max(1, Math.round(num(pr.count))), pieceWeight: num(pr.pieceWeight) });
     S.plan.adjOpen = true;
     location.hash = `#/plan/${r.id}`;
     toast('Werte aus dem Tagebuch übernommen');
@@ -2274,10 +2518,25 @@ const INPUTS = {
     f.name = el.value;
     d.preferments.forEach((pf) => { if (pf.flourName === old) pf.flourName = el.value; });
     liveDraft();
+    const box = $('#flour-lib-box');
+    if (box) { const open = !!box.querySelector('details[open]'); box.innerHTML = flourLib(d); if (open) box.querySelector('details')?.setAttribute('open', ''); }
   },
   link: (el) => {
     const d = S.draft, f = el.dataset.link, v = num(el.value);
     d[f].pct = el.dataset.unit === 'pct' ? v : Math.round(C.pctFromGrams(d, f, v) * 100) / 100;
+    liveDraft();
+  },
+  kiInput: (el) => { S.ki.input = el.value; const p = $('#ki-prompt'); if (p) p.value = KI.buildPrompt(el.value); },
+  kiAnswer: (el) => { S.ki.answer = el.value; },
+  wtemp: (el) => { S.draft.water.temp = C.optNum(el.value); liveDraft(); },
+  ice: (el) => {
+    const d = S.draft, v = C.optNum(el.value);
+    if (v === '' || v <= 0) d.water.icePct = '';
+    else if (el.dataset.unit === 'pct') d.water.icePct = Math.min(100, v);
+    else {
+      const mw = Math.max(0, calc(d).main.water);
+      d.water.icePct = mw > 0 ? Math.min(100, Math.round((v / mw) * 10000) / 100) : '';
+    }
     liveDraft();
   },
   dur: (el) => {
@@ -2311,7 +2570,9 @@ const CHANGES = {
     const s = sessById(el.dataset.id), st = s.steps[+el.dataset.i];
     st.meas ||= {};
     const v = el.value.trim().replace(',', '.');
-    if (v === '' || !Number.isFinite(+v)) delete st.meas[el.dataset.k]; else st.meas[el.dataset.k] = +v;
+    const k = el.dataset.k;
+    // Wasser/Eis sind aus dem Rezept vorbelegt: Leeren heißt „heute nicht“ → '' merken statt löschen
+    if (v === '' || !Number.isFinite(+v)) { if (k === 'water' || k === 'ice') st.meas[k] = ''; else delete st.meas[k]; } else st.meas[k] = +v;
     await saveSession(s);
     const sum = $('#meas-sum');
     if (sum) sum.innerHTML = measLabel(st.meas) || 'Temperatur notieren';
@@ -2320,8 +2581,12 @@ const CHANGES = {
   },
   planOv: (el) => {
     const k = el.dataset.k;
-    S.plan.ov[k] = k === 'room' && el.value.trim() === '' ? '' : num(el.value);
-    S.plan.adjOpen = true;
+    let v = k === 'room' && el.value.trim() === '' ? '' : num(el.value);
+    if (k === 'count') v = Math.max(1, Math.round(v));
+    if ((k === 'pieceWeight' || k === 'flour') && !(v > 0)) { toast('Bitte eine Menge größer 0 eingeben'); render(); return; }
+    if (k === 'hydration' && !(v > 0)) { toast('Bitte eine Hydration größer 0 eingeben'); render(); return; }
+    S.plan.ov[k] = v;
+    if (k === 'hydration' || k === 'room') S.plan.adjOpen = true;
     render();
   },
   addPhotos: async (el) => {
@@ -2391,7 +2656,7 @@ async function migrateLocal() {
 }
 
 async function init() {
-  try { await reload(); await migrateLocal(); } catch (e) { console.error(e); toast('Speicher nicht verfügbar – Daten können nicht gesichert werden.', 5000); }
+  try { await reload(); await migrateLocal(); await checkAchievements(); } catch (e) { console.error(e); toast('Speicher nicht verfügbar – Daten können nicht gesichert werden.', 5000); }
   try { await sync.init(S.settings); } catch (e) { console.error(e); }
   sync.onUpdate(() => {
     // Status in den Einstellungen aktualisieren (ohne beim Tippen zu stören)

@@ -5,6 +5,12 @@ export function num(v) {
   const x = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
   return Number.isFinite(x) ? x : 0;
 }
+// Optionale Zahl: '' bleibt '' (= nicht angegeben), sonst eine endliche Zahl
+export function optNum(v) {
+  if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return '';
+  const x = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+  return Number.isFinite(x) ? x : '';
+}
 const p = (v) => num(v) / 100;
 const sum = (arr, f = (x) => x) => arr.reduce((s, x) => s + f(x), 0);
 
@@ -141,11 +147,15 @@ export function calc(r, ov = {}) {
   if (mainWater < -0.5) warnings.push('Die Vorteige enthalten mehr Wasser als die Gesamthydration erlaubt – Hydration erhöhen oder Vorteig-Hydration senken.');
   const oil = F * fr.oil, salt = F * fr.salt, yeastMain = F * fr.yeast;
   const extras = (r.extras || []).map((e) => ({ name: e.name, pct: num(e.pct), g: F * p(e.pct) }));
+  // Optional (ab Schema 3): Wassertemperatur und Eis-Anteil des Hauptteig-Wassers – ändert die Hydration nicht
+  const waterTemp = optNum(r.water?.temp);
+  const icePct = Math.min(100, Math.max(0, num(r.water?.icePct)));
+  const ice = Math.max(0, mainWater) * icePct / 100;
 
   return {
     F, D, count, pieceWeight: pw, mode: y.mode, warnings,
     pfs: pfRes,
-    main: { flours: flours.map((f) => ({ name: f.name, g: f.g })), water: mainWater, oil, salt, yeast: yeastMain, extras },
+    main: { flours: flours.map((f) => ({ name: f.name, g: f.g })), water: mainWater, oil, salt, yeast: yeastMain, extras, waterTemp, ice, icePct },
     totals: {
       flour: F, water: totalWater, oil, salt, dough: D,
       yeast: yeastMain + sum(pfRes, (x) => x.yeast),
@@ -266,7 +276,7 @@ function keepUnknown(src, known) {
 const R_KEYS = ['v', 'id', 'name', 'category', 'description', 'source', 'tags', 'favorite', 'photos', 'cover', 'yield', 'flours', 'water', 'oil', 'salt', 'yeastType', 'yeastPct', 'extras', 'preferments', 'steps', 'ddt', 'notes', 'createdAt', 'updatedAt'];
 const PF_KEYS = ['id', 'type', 'name', 'flourPct', 'hydration', 'yeastPct', 'starterPct', 'starterHydration', 'flourName'];
 const ST_KEYS = ['id', 'kind', 'name', 'durationMin', 'location', 'temp', 'notes', 'parallel', 'stage', 'repeat'];
-const L_KEYS = ['v', 'id', 'recipeId', 'date', 'rating', 'sub', 'params', 'roomTemp', 'doughTemp', 'fridgeTemp', 'oven', 'bakeTemp', 'bakeTime', 'notes', 'nextTime', 'photos', 'sessionId', 'createdAt', 'updatedAt'];
+const L_KEYS = ['v', 'id', 'recipeId', 'date', 'rating', 'sub', 'params', 'roomTemp', 'doughTemp', 'fridgeTemp', 'waterTemp', 'iceG', 'oven', 'bakeTemp', 'bakeTime', 'notes', 'nextTime', 'photos', 'sessionId', 'createdAt', 'updatedAt'];
 
 export function sanitizeRecipe(r) {
   const pfIds = new Map();
@@ -294,7 +304,8 @@ export function sanitizeRecipe(r) {
     photos, cover: photos.includes(safeId(r.cover)) ? safeId(r.cover) : null,
     yield: { ...keepUnknown(y, ['mode', 'count', 'pieceWeight', 'flour', 'loss']), mode: y.mode === 'flour' ? 'flour' : 'pieces', count: num(y.count) || 1, pieceWeight: num(y.pieceWeight), flour: num(y.flour), loss: num(y.loss) },
     flours: (Array.isArray(r.flours) ? r.flours : []).map((f) => ({ name: str(f.name, 80), pct: num(f.pct) })),
-    water: { pct: num(r.water?.pct) }, oil: { pct: num(r.oil?.pct) }, salt: num(r.salt),
+    water: { ...keepUnknown(r.water, ['pct', 'temp', 'icePct']), pct: num(r.water?.pct), temp: optNum(r.water?.temp), icePct: optNum(r.water?.icePct) === '' ? '' : Math.min(100, Math.max(0, optNum(r.water.icePct))) },
+    oil: { ...keepUnknown(r.oil, ['pct']), pct: num(r.oil?.pct) }, salt: num(r.salt),
     yeastType: r.yeastType === 'dry' || r.yeastType === 'fresh' ? r.yeastType : '', yeastPct: num(r.yeastPct),
     extras: (Array.isArray(r.extras) ? r.extras : []).map((e) => ({ name: str(e.name, 80), pct: num(e.pct) })),
     preferments, steps, ddt: num(r.ddt ?? 24), notes: str(r.notes, 8000),
@@ -313,7 +324,7 @@ export function sanitizeLog(l) {
     rating: Math.max(0, Math.min(5, Math.round(num(l.rating)))), sub,
     params: { ...keepUnknown(p, ['hydration', 'salt', 'yeastPct', 'pf', 'count', 'pieceWeight', 'totalHours', 'flour']), hydration: num(p.hydration), salt: num(p.salt), yeastPct: num(p.yeastPct), pf: str(p.pf, 120), count: num(p.count),
       pieceWeight: num(p.pieceWeight), totalHours: num(p.totalHours), flour: str(p.flour, 200) },
-    roomTemp: str(l.roomTemp, 10), doughTemp: str(l.doughTemp, 10), fridgeTemp: str(l.fridgeTemp, 10), oven: str(l.oven, 80),
+    roomTemp: str(l.roomTemp, 10), doughTemp: str(l.doughTemp, 10), fridgeTemp: str(l.fridgeTemp, 10), waterTemp: str(l.waterTemp, 10), iceG: str(l.iceG, 10), oven: str(l.oven, 80),
     bakeTemp: str(l.bakeTemp, 10), bakeTime: str(l.bakeTime, 40), notes: str(l.notes, 4000), nextTime: str(l.nextTime, 1000),
     photos: (Array.isArray(l.photos) ? l.photos : []).map(safeId).filter(Boolean), sessionId: safeId(l.sessionId) || null,
     createdAt: num(l.createdAt) || Date.now(), updatedAt: num(l.updatedAt) || 0,
@@ -337,7 +348,7 @@ export function blankRecipe(category = 'pizza') {
     id: uid(), name: '', category, description: '', tags: [], favorite: false, photos: [], cover: null,
     yield: bread ? { mode: 'pieces', count: 1, pieceWeight: 900, flour: 500, loss: 0 } : { mode: 'pieces', count: 6, pieceWeight: 260, flour: 1000, loss: 0 },
     flours: [{ name: bread ? 'Weizenmehl 550' : 'Tipo 00', pct: 100 }],
-    water: { pct: bread ? 72 : 65 }, oil: { pct: 0 }, salt: bread ? 2 : 2.8,
+    water: { pct: bread ? 72 : 65, temp: '', icePct: '' }, oil: { pct: 0 }, salt: bread ? 2 : 2.8,
     yeastType: 'fresh', yeastPct: bread ? 0 : 0.2,
     extras: [], preferments: [], steps: [], ddt: bread ? 25 : 23, notes: '',
     createdAt: Date.now(), updatedAt: Date.now(),

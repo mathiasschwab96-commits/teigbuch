@@ -26,6 +26,11 @@ Kosten: keine. GitHub und Supabase werden im kostenlosen Tarif genutzt.
   Teil H  Erste Schritte in der App
   Teil I  Updates einspielen
   Teil J  Wenn etwas nicht klappt
+  Teil K  Teigbuch mit anderen teilen (Hinweise für dich als Besitzer)
+
+Weitere Anleitungen in diesem Ordner:
+  ANLEITUNG-NEUES-GERAET.txt  Teigbuch auf einem weiteren eigenen Gerät
+  ANLEITUNG-FUER-ANDERE.txt   zum Weitergeben an Freunde/Familie
 
 Hinweis: Die Menüs von Supabase und GitHub ändern sich gelegentlich.
 Wenn ein Knopf etwas anders heißt, suche nach dem sinngemäßen Begriff.
@@ -42,7 +47,8 @@ A2. Neues Projekt anlegen: "New project"
       - Name:      teigbuch
       - Database Password: ein sicheres Passwort erzeugen lassen und
                    notieren (wird für die App nicht gebraucht, aber gut aufheben)
-      - Region:    "Central EU (Frankfurt)"
+      - Region:    eine EU-Region, z. B. "Central EU (Frankfurt)" oder
+                   "West EU (Ireland)" – beides passt
       - Tarif:     Free
     -> "Create new project". Das Einrichten dauert 1–2 Minuten.
 
@@ -56,6 +62,11 @@ A3. Datenbank vorbereiten:
       - Ergebnis unten: "Success. No rows returned"   ✔
       (Falls Supabase vor "destructive operations" warnt: bestätigen –
        das Skript löscht nur alte Regeln, um sie neu anzulegen.)
+      Hinweis: Das Skript vergibt auch die Zugriffsrechte ("grant …").
+      Neue Supabase-Projekte tun das nicht mehr automatisch – ohne diese
+      Zeilen meldet der Wecker "HTTP 401" und der Abgleich funktioniert nicht.
+      Wer das Skript schon früher ohne diese Zeilen ausgeführt hat, führt
+      es einfach noch einmal komplett aus (schadet nicht).
 
 A4. Anmeldung per E-Mail prüfen:
       - Links "Authentication" -> "Sign In / Providers":
@@ -66,16 +77,19 @@ A4. Anmeldung per E-Mail prüfen:
       (Hinweis: Im Gratis-Tarif lassen sich die Vorlagen nur mit eigenem
        E-Mail-Server/SMTP bearbeiten – das brauchst du nicht.)
 
-A5. Zugangsdaten abholen:
-      - Links unten "Project Settings" (Zahnrad) -> "API Keys"
-        (bei älteren Projekten: "API").
+A5. Zugangsdaten abholen – am schnellsten über den grünen "Connect"-Knopf
+    oben, oder: Zahnrad (Project Settings) unten links -> "API Keys".
       - Notiere dir:
           1) Project URL      z. B. https://abcdefghijkl.supabase.co
-             (steht unter "Data API" bzw. ganz oben bei "API")
+             Tipp: Die Buchstabenfolge ist die Projekt-Kennung aus der
+             Browser-Adresse (supabase.com/dashboard/project/abcdefghijkl/…).
+             Zum Gegenprüfen: Project Settings -> "Data API".
           2) Publishable key  beginnt mit  sb_publishable_...
+             -> in der Zeile "default" auf das Kopieren-Symbol klicken
              (bei älteren Projekten heißt er "anon public" und beginnt mit eyJ...)
-      ACHTUNG: Den "secret"- bzw. "service_role"-Schlüssel NIE verwenden
-      oder weitergeben!
+      ACHTUNG: Den "Secret key" (sb_secret_…) bzw. "service_role" NIE
+      verwenden oder weitergeben! Den Hinweis "Legacy API keys will be
+      retired" kannst du ignorieren – die App nutzt bereits die neuen Schlüssel.
 
 
 ------------------------------------------------------------------
@@ -113,16 +127,22 @@ C2. Neues Repository: oben rechts "+" -> "New repository"
     -> "Create repository"
 
 C3. Dateien hochladen:
-      - Auf der neuen, leeren Seite auf "uploading an existing file" klicken
-      - Im Windows-Explorer den Ordner "teigbuch" öffnen, ALLE Dateien und
-        Unterordner markieren (Strg+A) und ins Browserfenster ziehen
-        (inkl. Ordner "icons" und ".github"; den Ordner "rezepte" brauchst
-        du NICHT hochzuladen – er ist nur für dich zum Importieren)
+      - Auf der neuen, leeren Repository-Seite steht im blauen Kasten
+        "Quick setup" unter der Adresszeile ganz klein:
+        "Get started by creating a new file or uploading an existing file"
+        -> auf den Link "uploading an existing file" klicken
+      - Im Windows-Explorer den Ordner "teigbuch" öffnen (NICHT den Ordner
+        selbst ziehen, sondern seinen Inhalt), alles markieren (Strg+A),
+        dann den Ordner "rezepte" mit Strg+Klick wieder abwählen (er ist
+        nur für dich zum Importieren)
+      - Die markierten Dateien/Ordner ins Browserfenster auf die Fläche ziehen
       - Warten, bis alle Dateien aufgelistet sind
       - Unten "Commit changes"
     Kontrolle: Auf der Repository-Startseite müssen u. a. "index.html",
     "app.js", "config.js" und der Ordner "icons" direkt sichtbar sein
     (NICHT in einem Unterordner "teigbuch").
+    Der Ordner ".github" wird beim Ziehen oft NICHT mit übertragen – das
+    wird in Teil E2 nachgeholt.
 
 C4. GitHub Pages einschalten:
       - Im Repository oben "Settings" -> links "Pages"
@@ -140,10 +160,16 @@ C5. Diese Adresse notieren und einmal am PC öffnen. Die App sollte
 TEIL D – Adresse der App in Supabase hinterlegen
 ------------------------------------------------------------------
 
-D1. Supabase -> "Authentication" -> "URL Configuration"
-D2. "Site URL": deine Adresse aus C4 eintragen
+D1. supabase.com -> oben rechts "Dashboard" -> dein Projekt anklicken
+    (Achtung: Die normale supabase.com-Startseite und die Seite
+     "Authentication built in" sind Werbeseiten – erst ins Dashboard!)
+D2. Links in der schmalen Symbolleiste "Authentication" (Schloss-Symbol)
+    -> im Menü unter CONFIGURATION -> "URL Configuration"
+D3. "Site URL": den vorhandenen Eintrag (meist http://localhost:3000)
+    löschen und deine Adresse aus C4 eintragen,
       z. B. https://DEINNAME.github.io/teigbuch/
-D3. "Save"
+    -> "Save"
+D4. Darunter bei "Redirect URLs" -> "Add URL" -> dieselbe Adresse -> speichern
 
 (Damit führt der Link in der Anmelde-E-Mail zur App, falls du ihn doch
  einmal antippst statt ihn zu kopieren. Auf Android-Handys funktioniert
@@ -157,26 +183,55 @@ TEIL E – Wecker einrichten (Supabase wach halten)
 Supabase pausiert Gratis-Projekte nach 7 Tagen ohne Nutzung. Ein
 automatischer Zeitplan bei GitHub fragt die Datenbank alle 3 Tage kurz an.
 
-E1. Geheimnisse hinterlegen: Repository -> "Settings" ->
-    "Secrets and variables" -> "Actions" -> "New repository secret"
+Alles in Teil E passiert bei GitHub in deinem Repository "teigbuch"
+(Reiter oben: Code · Issues · … · Actions · … · Settings).
+
+E1. Geheimnisse hinterlegen: Reiter "Settings" (Zahnrad, ganz rechts) ->
+    links im Abschnitt "Security": "Secrets and variables" -> "Actions"
+    -> grüner Knopf "New repository secret"
       - Name: SUPABASE_URL        Secret: deine Project URL      -> "Add secret"
       - Name: SUPABASE_ANON_KEY   Secret: dein Publishable key   -> "Add secret"
+    WICHTIG beim Einfügen der Werte:
+      - genau dieselben Werte wie in config.js, aber OHNE die
+        Anführungszeichen ' ' drumherum
+      - URL ohne Schrägstrich / am Ende, z. B.
+        https://abcdefghijkl.supabase.co
+      - keine Leerzeichen oder Zeilenumbrüche am Ende (nach dem Einfügen
+        "Ende"-Taste drücken und prüfen)
+    Ein Secret korrigieren: in der Liste auf das Stift-Symbol -> Feld
+    leeren -> neu einfügen -> "Update secret" (den alten Inhalt kann man
+    nicht ansehen).
 
-E2. Prüfen, ob der Zeitplan hochgeladen wurde: Auf der Repository-Seite
-    muss ein Ordner ".github" zu sehen sein.
-    FALLS NICHT (manche Browser übertragen Ordner mit Punkt nicht):
-      - "Add file" -> "Create new file"
-      - Als Dateiname genau eingeben:  .github/workflows/supabase-keepalive.yml
+E2. Prüfen, ob der Zeitplan da ist: Reiter "Code" -> in der Dateiliste
+    muss der Ordner ".github/workflows" mit der Datei
+    "supabase-keepalive.yml" stehen.
+    FALLS NICHT:
+      - Über der Dateiliste "Add file" -> "Create new file"
+      - Ins Namensfeld genau eintippen:  .github/workflows/supabase-keepalive.yml
+        (bei jedem "/" legt GitHub automatisch einen Ordner an)
       - Den Inhalt der gleichnamigen Datei aus dem Ordner
         teigbuch\.github\workflows\ mit dem Editor öffnen, alles kopieren,
-        einfügen -> "Commit changes"
+        ins große Feld einfügen -> "Commit changes…" -> "Commit changes"
+    ACHTUNG Dateiname: Er muss exakt "supabase-keepalive.yml" lauten –
+    KEIN Punkt am Ende ("supabase-keepalive.yml." wird nicht erkannt!),
+    keine Endung ".txt". Falsch benannt? Datei öffnen -> Stift-Symbol ->
+    im Namensfeld korrigieren -> "Commit changes".
 
-E3. Testen: Repository -> Reiter "Actions"
+E3. Testen: Reiter "Actions"
       - Falls gefragt: "I understand my workflows, go ahead and enable them"
-      - Links "Supabase wach halten" -> rechts "Run workflow" -> "Run workflow"
-      - Nach ca. 30 Sekunden: grüner Haken ✔ = alles richtig
-        Roter Kreis ✖ = Lauf anklicken und die Meldung lesen
-        (meist ist ein Secret falsch geschrieben).
+      - Links "Supabase wach halten" anklicken (steht dort nur
+        "pages-build-deployment", fehlt die Datei aus E2 oder sie ist
+        falsch benannt)
+      - Rechts "Run workflow" -> grün "Run workflow"
+      - Nach ca. 30 Sekunden Seite neu laden:
+        grüner Haken ✔ = alles richtig
+        roter Kreis ✖ = Lauf anklicken -> "ping" -> Schritt
+        "Supabase anfragen" aufklappen -> Zeile "Antwort von Supabase: HTTP …":
+          HTTP 404 -> Secret SUPABASE_URL falsch (E1 wiederholen)
+          HTTP 401 -> Secret SUPABASE_ANON_KEY falsch ODER Zugriffsrechte
+                      fehlen (supabase-setup.sql aus A3 erneut ausführen)
+    ("pages-build-deployment" ist die Veröffentlichung der App selbst –
+     dort ist ein grüner Haken ebenfalls richtig.)
 
 Ab jetzt läuft der Wecker automatisch alle 3 Tage. Zusätzlich hält jeder
 Abgleich aus der App das Projekt wach.
@@ -187,10 +242,19 @@ TEIL F – App aufs Handy installieren
 ------------------------------------------------------------------
 
 ANDROID (Chrome):
-  F1. Adresse aus C4 in Chrome öffnen
-  F2. Menü ⋮ -> "App installieren" (oder "Zum Startbildschirm hinzufügen")
-  F3. Teigbuch über das neue Symbol starten
-  F4. Bei der Frage nach Benachrichtigungen: "Zulassen"
+  F1. Adresse aus C4 in Chrome öffnen (normaler Tab, NICHT Inkognito)
+  F2. Warten, bis die Seite ganz geladen ist (links in der Adresszeile
+      steht dann kein ⓧ mehr), und die Seite EINMAL NEU LADEN
+  F3. Menü ⋮ -> "App installieren" bzw. "Zum Startbildschirm hinzufügen"
+      -> "Installieren"
+      Alternative: In der App unten "Einstellungen" -> Karte
+      "Als App installieren" -> Knopf "Installieren"
+  F4. Teigbuch über das neue Symbol starten
+  F5. Bei der Frage nach Benachrichtigungen: "Zulassen"
+  Meldet Chrome "Diese App kann nicht installiert werden": Fenster
+  schließen, Seite neu laden, kurz warten und erneut versuchen.
+  Notlösung: "Verknüpfung erstellen" – das Symbol öffnet die App dann in
+  Chrome; Rezepte, Timer und Sync funktionieren genauso.
 
 iPHONE (Safari, iOS 16.4 oder neuer):
   F1. Adresse aus C4 in SAFARI öffnen (nicht Chrome)
@@ -257,11 +321,23 @@ H3. Eigenes Rezept anlegen: Rezepte -> "+ Rezept" -> Vorlage oder
     "Leeres Pizzarezept" -> Schritt für Schritt durchgehen -> "Speichern"
       1 Grunddaten   Name, Kategorie, Beschreibung, Quelle (z. B. Link zur Webseite)
       2 Teigmenge    "Nach Teiglingen" (z. B. 4 × 280 g) oder "Nach Mehlmenge"
-      3 Mehl & Wasser  Wasser wahlweise in % (Hydration) ODER in Gramm
+      3 Mehl & Wasser  Wasser wahlweise in % (Hydration) ODER in Gramm;
+                     optional eingeklappt: Wassertemperatur und Eis-Anteil
+                     ("ⓘ Mehl-Infos" zeigt Richtwerte zu bekannten Mehlen)
       4 Vorteig      Biga, Poolish, Sauerteig, Lievito Madre …
       5 Salz, Hefe & Co.  zuerst Hefe-Art wählen (Frisch- oder Trockenhefe)
       6 Teigführung  "✨ Ablauf vorschlagen" und anpassen, oder selbst anlegen
       7 Fotos & Notizen
+
+    TIPP – Rezept aus Screenshot, Foto, Link oder Videobeschreibung
+    übernehmen lassen: "+ Rezept" -> "📷 Aus Bild, Link oder Text"
+      1. "Auftrag kopieren" (oder "An KI-App teilen")
+      2. Eine KI-App öffnen (ChatGPT, Claude, Gemini, Copilot …), Auftrag
+         einfügen, Foto/Screenshot anhängen, absenden
+      3. Komplette Antwort kopieren -> in Teigbuch einfügen ->
+         "Rezept erstellen" -> im Editor prüfen -> "Speichern"
+    Die KI kann sich irren – Mengen und Zeiten kurz gegenprüfen. Bild und
+    Text gehen dabei an den Anbieter der KI-App, nicht an Teigbuch.
 
     TIPP – Rezept aus dem Internet oder einem Buch abtippen:
     In den Schritten "Vorteig" und "Salz, Hefe & Co." oben
@@ -280,10 +356,21 @@ H4. Menge ändern (skalieren): Rezept öffnen -> Reiter "Zutaten" ->
 H5. Backen: Rezept öffnen -> "Backen planen"
       - "Jetzt starten": zeigt sofort, wann gebacken wird
       - "Backen um …": rechnet die Startzeit rückwärts aus
+      - "Menge für diesen Backtag": z. B. 3 × 280 g – nur für diesen
+        Backtag, das Rezept bleibt unverändert
+      - "Weitere Anpassungen" (eingeklappt): Hydration, Raumtemperatur
       - Fällt ein Schritt in die Nacht: "🪄 Anpassen"
-H6. Während des Backens: "Weiter" tippen, wenn ein Schritt erledigt ist.
-    "🙌 Groß" öffnet den Teighände-Modus.
+H6. Während des Backens:
+      - Bei Schritten, in denen gemischt wird, stehen die Zutaten im
+        Bild (antippen = abhaken), darunter der Knopf "Weiter: …".
+      - "Weiter" tippen, wenn ein Schritt erledigt ist. Läuft der Schritt
+        noch, fragt die App zur Sicherheit nach.
+      - "↶ Zurück" öffnet den zuletzt erledigten Schritt wieder.
+      - "🌡️ Temperatur notieren": Teig-, Raum- und Kühlschranktemperatur;
+        beim Hauptteig zusätzlich Wassertemperatur und Eis.
+      - "🙌 Groß" öffnet den Teighände-Modus.
 H7. Danach: Tagebuch-Eintrag mit Sternen, Notizen und Fotos anlegen.
+    Erreichte Erfolge (🏅) siehst du ganz unten in den Einstellungen.
 H8. Optional: Zusatzfunktionen unter Einstellungen -> Funktionen an/aus.
 
 Zusätzliche Sicherung (empfohlen, ca. 1x im Monat):
@@ -308,12 +395,14 @@ Sicherungen bleiben dauerhaft gültig:
 TEIL I – Updates einspielen
 ------------------------------------------------------------------
 
+Ausführlich mit Dateiliste der aktuellen Version: ANLEITUNG-UPDATE.txt
+
 I1. Geänderte Dateien im GitHub-Repository hochladen ("Add file" ->
     "Upload files", gleiche Namen ersetzen die alten) -> "Commit changes"
 I2. Die Datei config.js dabei NICHT überschreiben (oder vorher wieder
     deine Werte eintragen).
 I3. WICHTIG: In "sw.js" ganz oben die Versionsnummer erhöhen, z. B.
-      const CACHE = 'teigbuch-v1.5.0';  ->  'teigbuch-v1.5.1'
+      const CACHE = 'teigbuch-v1.7.0';  ->  'teigbuch-v1.7.1'
     (Bei Updates von mir ist das schon erledigt.) Nur so erkennen die
     Geräte, dass es eine neue Version gibt.
 I4. Nach 1–2 Minuten ist die neue Version online. Beim nächsten Öffnen
@@ -330,6 +419,10 @@ I6. Erscheint nach dem Update "📝 … braucht noch eine Angabe":
 ------------------------------------------------------------------
 TEIL J – Wenn etwas nicht klappt
 ------------------------------------------------------------------
+
+Chrome meldet "Diese App kann nicht installiert werden"
+  -> Seite ganz laden lassen und einmal neu laden (Teil F2), kein
+     Inkognito-Tab. Sonst "Verknüpfung erstellen" als Notlösung.
 
 "Geräte-Sync: nicht eingerichtet"
   -> config.js enthält keine oder falsche Werte (Teil B), oder die
@@ -357,8 +450,12 @@ Link versehentlich angetippt -> Seite "localhost" oder Fehlermeldung
   -> Teil A3 wiederholen.
 
 Wecker-Lauf mit rotem ✖
-  -> Secrets aus E1 prüfen (Name exakt, keine Leerzeichen). GitHub schickt
-     außerdem eine E-Mail, falls ein Zeitplan fehlschlägt.
+  -> Lauf anklicken -> "ping" -> Schritt "Supabase anfragen" aufklappen:
+     - "HTTP 404": Secret SUPABASE_URL ist falsch – neu setzen, exakt
+       https://DEINPROJEKT.supabase.co (ohne / und ohne Leerzeichen am Ende)
+     - "HTTP 401": Zugriffsrechte fehlen – supabase-setup.sql (aktuelle
+       Version) im SQL Editor noch einmal ausführen
+     GitHub schickt außerdem eine E-Mail, falls ein Zeitplan fehlschlägt.
 
 Die App zeigt noch eine alte Version
   -> Wurde in sw.js die Versionsnummer erhöht (Teil I3)? Dann App komplett
@@ -383,6 +480,36 @@ Handywechsel
   -> Mit Sync: auf dem neuen Handy Teil F + G – fertig.
   -> Ohne Sync: Einstellungen -> Daten -> "Sichern" auf dem alten Handy,
      "Importieren" auf dem neuen.
+
+------------------------------------------------------------------
+TEIL K – Teigbuch mit anderen teilen (für dich als Besitzer)
+------------------------------------------------------------------
+
+Weitergeben: App-Adresse + die Datei ANLEITUNG-FUER-ANDERE.txt schicken.
+Andere können Teigbuch dann ohne Konto (nur auf ihrem Gerät) oder mit
+eigenem Konto nutzen. Mit Konto melden sie sich mit IHRER E-Mail-Adresse
+an und landen in DEINEM Supabase-Projekt – jeder sieht in der App nur
+seine eigenen Rezepte.
+
+Was du dabei wissen solltest:
+  - Verantwortung: Die E-Mail-Adressen und Rezepte der anderen liegen in
+    deinem Supabase-Projekt, und du kannst sie dort als Verwalter
+    technisch einsehen. Das steht so auch in der Anleitung für andere.
+    Teile die App am besten nur mit Leuten, die du kennst.
+  - Gratis-Grenzen gelten für ALLE zusammen: 500 MB Daten, 1 GB Fotos,
+    und nur wenige Anmelde-E-Mails pro Stunde. Für Familie und Freunde
+    reicht das gut; bei vielen Nutzern mit vielen Fotos wird es eng.
+  - Neue Anmeldungen sperren (z. B. wenn alle dabei sind):
+    Supabase -> Authentication -> "Sign In / Providers" ->
+    "Allow new users to sign up" ausschalten -> "Save".
+    Bestehende Nutzer können sich weiter anmelden.
+  - Jemanden entfernen: Supabase -> Authentication -> "Users" -> Nutzer
+    anklicken -> "Delete user". Seine Rezepte in der Datenbank werden
+    dabei mitgelöscht.
+  - Updates, die du hochlädst, bekommen automatisch alle Nutzer.
+  - Wer lieber eine komplett eigene Teigbuch-Installation möchte (eigenes
+    GitHub + Supabase), bekommt den Ordner "teigbuch" und folgt dieser
+    ANLEITUNG.txt (Teile A–G) mit eigenen Zugangsdaten.
 
 ==================================================================
 Viel Spaß beim Backen! 🍕🍞

@@ -3,9 +3,9 @@
 // Alle App-Dateien einer Version werden gemeinsam gespeichert und gemeinsam ausgeliefert
 // (kein Mix aus alten und neuen Dateien). Neue Version = CACHE-Name erhöhen; der Browser lädt
 // dann alle Dateien neu, aktiviert sie und die App lädt sich einmal neu.
-const CACHE = 'teigbuch-v1.6.1';
+const CACHE = 'teigbuch-v1.8.0';
 const ASSETS = [
-  './', './index.html', './styles.css', './app.js', './calc.js', './db.js', './qr.js', './sync.js', './migrate.js', './config.js', './manifest.webmanifest',
+  './', './index.html', './styles.css', './app.js', './calc.js', './db.js', './qr.js', './sync.js', './migrate.js', './extras.js', './ki-import.js', './config.js', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
 ];
 // Diese Datei immer frisch vom Server holen (falls nur die Zugangsdaten geändert wurden)

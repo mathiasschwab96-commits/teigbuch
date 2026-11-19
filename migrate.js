@@ -15,9 +15,11 @@
 // Versionsgeschichte
 //   1  bis App 1.4 – Einträge ohne Versionsfeld
 //   2  App 1.5 – Feld „v“ je Eintrag, Rezept-„source“, yield.mode immer gesetzt
+//   3  App 1.7 – optional: Rezept water.temp (°C) und water.icePct (% des Hauptteig-Wassers als Eis);
+//               Tagebuch waterTemp / iceG. Leer = nicht angegeben, daher keine Rückfrage nötig.
 import { num, sanitizeRecipe, sanitizeLog } from './calc.js';
 
-export const SCHEMA = 2;
+export const SCHEMA = 3;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -27,11 +29,20 @@ const RECIPE_MIGRATIONS = {
     if (r.yield.mode !== 'flour' && r.yield.mode !== 'pieces') r.yield.mode = num(r.yield.flour) > 0 && !(num(r.yield.pieceWeight) > 0) ? 'flour' : 'pieces';
     return r;
   },
+  // 2 → 3: optionale Wasser-Angaben ergänzen (vorhandene Werte bleiben unberührt)
+  2: (r) => {
+    r.water = { ...(r.water || {}) };
+    if (r.water.temp === undefined) r.water.temp = '';
+    if (r.water.icePct === undefined) r.water.icePct = '';
+    return r;
+  },
 };
 
 const LOG_MIGRATIONS = {
   // 1 → 2 (keine inhaltliche Änderung)
   1: (l) => l,
+  // 2 → 3: optionale Felder Wassertemperatur / Eis
+  2: (l) => ({ ...l, waterTemp: l.waterTemp ?? '', iceG: l.iceG ?? '' }),
 };
 
 function run(rec, migrations) {
