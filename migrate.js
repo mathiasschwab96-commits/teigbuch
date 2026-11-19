@@ -17,9 +17,13 @@
 //   2  App 1.5 – Feld „v“ je Eintrag, Rezept-„source“, yield.mode immer gesetzt
 //   3  App 1.7 – optional: Rezept water.temp (°C) und water.icePct (% des Hauptteig-Wassers als Eis);
 //               Tagebuch waterTemp / iceG. Leer = nicht angegeben, daher keine Rückfrage nötig.
-import { num, sanitizeRecipe, sanitizeLog } from './calc.js';
+//   4  App 1.9 – neue Kategorien „fine“ (Feingebäck) und „cake“ (Kuchen & Torten);
+//               Rezept lamination {pct, name} (Ziehfett, 0 = keins), pan {shape, d, l, w, n} (Backform, '' = keine Angabe),
+//               parts [{id, name, items:[{name, amount, unit}]}] (nur Kuchen); Schritt-Arten „laminate“, „assemble“;
+//               Tagebuch params.pan (Form als Text). Ältere Rezepte hatten nichts davon → leer/0, keine Rückfrage nötig.
+import { num, sanitizeRecipe, sanitizeLog, CATEGORIES, isCake } from './calc.js';
 
-export const SCHEMA = 3;
+export const SCHEMA = 4;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -36,6 +40,13 @@ const RECIPE_MIGRATIONS = {
     if (r.water.icePct === undefined) r.water.icePct = '';
     return r;
   },
+  // 3 → 4: Ziehfett, Backform und Kuchen-Bestandteile – bisherige Rezepte hatten nichts davon
+  3: (r) => {
+    if (r.lamination === undefined) r.lamination = { pct: 0, name: '' };
+    if (r.pan === undefined) r.pan = { shape: '', d: 0, l: 0, w: 0, n: 0 };
+    if (r.parts === undefined) r.parts = [];
+    return r;
+  },
 };
 
 const LOG_MIGRATIONS = {
@@ -43,6 +54,8 @@ const LOG_MIGRATIONS = {
   1: (l) => l,
   // 2 → 3: optionale Felder Wassertemperatur / Eis
   2: (l) => ({ ...l, waterTemp: l.waterTemp ?? '', iceG: l.iceG ?? '' }),
+  // 3 → 4: optionale Backform (nur Kuchen)
+  3: (l) => ({ ...l, params: { ...(l.params || {}), pan: l.params?.pan ?? '' } }),
 };
 
 function run(rec, migrations) {
@@ -73,9 +86,10 @@ const usesYeast = (r) => num(r.yeastPct) > 0 || (r.preferments || []).some((p) =
 
 export const CHECKS = [
   {
-    id: 'category', question: 'Ist das ein Pizza- oder ein Brotrezept?',
-    missing: (r) => !['pizza', 'bread', 'other'].includes(r.category),
-    input: { type: 'choice', options: [['pizza', '🍕 Pizza'], ['bread', '🍞 Brot'], ['other', '🥐 Sonstiges']] },
+    // Kuchen werden nicht angeboten: deren Rezepte haben ein eigenes Format (Bestandteile statt Bäckerprozente)
+    id: 'category', question: 'Zu welcher Art gehört das Rezept?',
+    missing: (r) => !CATEGORIES.includes(r.category),
+    input: { type: 'choice', options: [['pizza', '🍕 Pizza'], ['bread', '🍞 Brot'], ['fine', '🥐 Feingebäck'], ['other', '🍽️ Sonstiges']] },
     apply: (r, v) => { r.category = v; },
   },
   {
@@ -86,13 +100,13 @@ export const CHECKS = [
   },
   {
     id: 'pieceWeight', question: 'Wie schwer ist ein Teigling bzw. Laib?',
-    missing: (r) => r.yield?.mode !== 'flour' && !(num(r.yield?.pieceWeight) > 0),
+    missing: (r) => !isCake(r) && r.yield?.mode !== 'flour' && !(num(r.yield?.pieceWeight) > 0),
     input: { type: 'number', unit: 'g', min: 1 },
     apply: (r, v) => { r.yield = { ...r.yield, mode: 'pieces', pieceWeight: num(v), count: num(r.yield?.count) || 1 }; },
   },
   {
     id: 'flour', question: 'Wie viel Mehl (gesamt) enthält das Rezept?',
-    missing: (r) => r.yield?.mode === 'flour' && !(num(r.yield?.flour) > 0),
+    missing: (r) => !isCake(r) && r.yield?.mode === 'flour' && !(num(r.yield?.flour) > 0),
     input: { type: 'number', unit: 'g', min: 1 },
     apply: (r, v) => { r.yield = { ...r.yield, flour: num(v) }; },
   },

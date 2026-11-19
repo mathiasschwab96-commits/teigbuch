@@ -29,6 +29,7 @@ export function fermentMinutes(steps) {
 }
 export function flourHints(r) {
   const hints = [];
+  if (r.category === 'cake') return hints;
   const weak = (r.flours || []).filter((f) => num(f.pct) >= 50 && flourInfo(f.name)?.strength === 'weak');
   if (weak.length && fermentMinutes(r.steps) > 72 * 60) hints.push(`„${weak[0].name}“ ist eher schwach für eine Gärzeit über 72 h – ein kräftigeres Mehl (z. B. Tipo 00 W 300+ oder ein Manitoba-Anteil) hält länger durch.`);
   return hints;
@@ -43,6 +44,9 @@ export const ACHIEVEMENTS = [
   { id: 'first', icon: '🥇', title: 'Erster Eintrag', desc: 'Den ersten Backtag ins Tagebuch geschrieben.', test: ({ logs }) => logs.length >= 1 },
   { id: 'pizza', icon: '🍕', title: 'Pizzaiolo', desc: 'Eine Pizza gebacken und eingetragen.', test: ({ logs, rec }) => logs.some((l) => rec(l)?.category === 'pizza') },
   { id: 'bread', icon: '🍞', title: 'Brotzeit', desc: 'Ein Brot gebacken und eingetragen.', test: ({ logs, rec }) => logs.some((l) => rec(l)?.category === 'bread') },
+  { id: 'fine', icon: '🥐', title: 'Feinbäcker', desc: 'Ein Feingebäck gebacken und eingetragen.', test: ({ logs, rec }) => logs.some((l) => rec(l)?.category === 'fine') },
+  { id: 'laminate', icon: '🧈', title: 'Tourier-Meister', desc: 'Einen Teig mit Ziehfett touriert (Croissant, Plunder).', test: ({ logs, rec }) => logs.some((l) => num(rec(l)?.lamination?.pct) > 0) },
+  { id: 'cake', icon: '🎂', title: 'Konditor', desc: 'Einen Kuchen gebacken und eingetragen.', test: ({ logs, rec }) => logs.some((l) => rec(l)?.category === 'cake') },
   { id: 'five', icon: '⭐', title: 'Volltreffer', desc: 'Ein Ergebnis mit 5 Sternen bewertet.', test: ({ logs }) => logs.some((l) => num(l.rating) === 5) },
   { id: 'biga', icon: '🧱', title: 'Biga-Baumeister', desc: 'Mit Biga gebacken.', test: ({ logs, rec }) => logs.some((l) => pfTypes(rec(l)).includes('biga')) },
   { id: 'poolish', icon: '🫧', title: 'Poolish-Profi', desc: 'Mit Poolish gebacken.', test: ({ logs, rec }) => logs.some((l) => pfTypes(rec(l)).includes('poolish')) },

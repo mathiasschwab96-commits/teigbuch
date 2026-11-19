@@ -1,0 +1,59 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 3,
+ "appVersion": "1.8.1",
+ "exportedAt": "2026-11-19T12:00:00.000Z",
+ "recipes": [
+  {
+   "v": 3,
+   "id": "fx3roggen",
+   "name": "Roggen-Sauerteigbrot (Sicherung 1.8)",
+   "category": "bread",
+   "description": "Testrezept im Format von App 1.8.1",
+   "source": "",
+   "tags": ["Sauerteig"],
+   "favorite": false,
+   "photos": [],
+   "cover": null,
+   "yield": { "mode": "flour", "count": 1, "pieceWeight": 0, "flour": 500, "loss": 0 },
+   "flours": [{ "name": "Roggenmehl 1150", "pct": 60 }, { "name": "Weizenmehl 1050", "pct": 40 }],
+   "water": { "pct": 75, "temp": 28, "icePct": "" },
+   "oil": { "pct": 0 },
+   "salt": 2,
+   "yeastType": "",
+   "yeastPct": 0,
+   "extras": [],
+   "preferments": [
+    { "id": "fx3pf1", "type": "levain", "name": "Sauerteig", "flourPct": 21, "hydration": 100, "yeastPct": 0, "starterPct": 100, "starterHydration": 100, "flourName": "Roggenmehl 1150" }
+   ],
+   "steps": [
+    { "id": "fx3s1", "kind": "prep", "name": "Sauerteig ansetzen", "durationMin": 10, "location": "rt", "temp": "", "stage": "fx3pf1", "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx3s2", "kind": "rest", "name": "Sauerteig reifen", "durationMin": 720, "location": "warm", "temp": "26 °C", "stage": "fx3pf1", "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx3s3", "kind": "mix", "name": "Teig mischen", "durationMin": 15, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx3s4", "kind": "bulk", "name": "Teigruhe", "durationMin": 60, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx3s5", "kind": "proof", "name": "Stückgare", "durationMin": 75, "location": "warm", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx3s6", "kind": "bake", "name": "Backen", "durationMin": 50, "location": "oven", "temp": "250 → 200 °C", "stage": null, "notes": "", "parallel": false, "repeat": null }
+   ],
+   "ddt": 28,
+   "notes": "",
+   "createdAt": 1795080000000,
+   "updatedAt": 1795080100000
+  }
+ ],
+ "logs": [
+  {
+   "v": 3,
+   "id": "fx3log1",
+   "recipeId": "fx3roggen",
+   "date": "2026-11-16",
+   "rating": 4,
+   "sub": { "crust": 4, "crumb": 3 },
+   "params": { "hydration": 75, "salt": 2, "yeastPct": 0, "pf": "Sauerteig 21 %", "count": 1, "pieceWeight": 0, "totalHours": 16, "flour": "Roggenmehl 1150, Weizenmehl 1050" },
+   "roomTemp": "22", "doughTemp": "27.5", "fridgeTemp": "", "waterTemp": "28", "iceG": "", "oven": "Backofen", "bakeTemp": "250", "bakeTime": "50 min",
+   "notes": "Kruste gut", "nextTime": "", "photos": [], "sessionId": null,
+   "createdAt": 1795090000000, "updatedAt": 1795090000000
+  }
+ ],
+ "photos": []
+}

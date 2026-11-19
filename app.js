@@ -8,7 +8,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '1.8.1';
+const VERSION = '1.9.0';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -27,14 +27,24 @@ const S = {
 const CAT = {
   pizza: { label: 'Pizza', icon: '🍕', piece: 'Teigling', pieces: 'Teiglinge' },
   bread: { label: 'Brot', icon: '🍞', piece: 'Laib', pieces: 'Laibe' },
-  other: { label: 'Sonstiges', icon: '🥐', piece: 'Stück', pieces: 'Stück' },
+  fine: { label: 'Feingebäck', icon: '🥐', piece: 'Stück', pieces: 'Stück' },
+  cake: { label: 'Kuchen', icon: '🎂', piece: 'Kuchen', pieces: 'Kuchen' },
+  other: { label: 'Sonstiges', icon: '🍽️', piece: 'Stück', pieces: 'Stück' },
 };
-const FLOUR_PRESETS = ['Tipo 00', 'Tipo 0', 'Tipo 1', 'Manitoba', 'Semola rimacinata', 'Weizenmehl 550', 'Weizenvollkornmehl', 'Dinkelmehl 630', 'Roggenmehl 1150'];
+// Feingebäck & Kuchen lassen sich unter Einstellungen → Funktionen ausblenden (vorhandene Rezepte bleiben)
+const NEW_CATS = ['fine', 'cake'];
+const catsShown = (cur) => Object.keys(CAT).filter((k) => feat('pastry') || !NEW_CATS.includes(k) || k === cur);
+const isCake = C.isCake;
+const FLOUR_PRESETS = ['Tipo 00', 'Tipo 0', 'Tipo 1', 'Manitoba', 'Semola rimacinata', 'Weizenmehl 405', 'Weizenmehl 550', 'Weizenvollkornmehl', 'Dinkelmehl 630', 'Roggenmehl 1150'];
 const SUBRATINGS = {
   pizza: [['rim', 'Rand'], ['base', 'Boden'], ['taste', 'Geschmack'], ['digest', 'Bekömmlichkeit']],
   bread: [['crust', 'Kruste'], ['crumb', 'Krume'], ['spring', 'Ofentrieb'], ['taste', 'Geschmack']],
+  fine: [['flaky', 'Blätterung / Lockerheit'], ['crumb', 'Krume / Waben'], ['color', 'Farbe & Glanz'], ['taste', 'Geschmack']],
+  cake: [['texture', 'Textur'], ['moist', 'Saftigkeit'], ['look', 'Optik'], ['taste', 'Geschmack']],
   other: [['texture', 'Textur'], ['taste', 'Geschmack']],
 };
+// Rechnet ein Rezept passend zu seiner Art: Bäckerprozente oder Kuchen (Zutatenliste × Formfaktor)
+const calcFor = (r, ov) => (isCake(r) ? C.calcCake(r, ov) : calc(r, ov));
 
 // ---------- Funktionen an/aus ----------
 const feat = (k) => S.settings.features?.[k] !== false;
@@ -230,12 +240,12 @@ function vList() {
   const active = S.sessions.filter((s) => s.status === 'active');
   // Filter nur anbieten, wenn sie etwas bewirken
   const cats = new Set(S.recipes.map((r) => r.category));
-  const filters = [['all', 'Alle'], ...[['pizza', '🍕 Pizza'], ['bread', '🍞 Brot'], ['other', '🥐 Sonstiges']].filter(([k]) => cats.has(k)),
+  const filters = [['all', 'Alle'], ...Object.entries(CAT).map(([k, v]) => [k, `${v.icon} ${v.label}`]).filter(([k]) => cats.has(k)),
     ...(S.recipes.some((r) => r.favorite) ? [['fav', '★ Favoriten']] : [])];
   const showSearch = S.searchOpen || S.listQuery;
   const html = `
   <header class="top">
-    <div><div class="eyebrow">Pizza &amp; Brot</div><h1 class="title brand">Teigbuch</h1></div>
+    <div><div class="eyebrow">${feat('pastry') ? 'Pizza · Brot · Gebäck' : 'Pizza &amp; Brot'}</div><h1 class="title brand">Teigbuch</h1></div>
     ${S.recipes.length ? `<div class="top-actions"><button class="icon-btn tonal" data-action="toggleSearch" aria-label="Suchen">${icon('search')}</button></div>` : ''}
   </header>
   <div class="pad">
@@ -266,7 +276,7 @@ function listCards() {
       <div class="rcard-img ph">${cover ? `<img data-photo="${cover}" alt="">` : ''}<span class="ph-emoji">${catOf(r.category).icon}</span></div>
       <div class="rcard-body">
         <div class="rcard-title">${r.favorite ? '<span class="fav">★</span> ' : ''}${esc(r.name || 'Ohne Namen')}</div>
-        <div class="meta">${pfLabel(r.preferments)} · ${fmtNum(r.water?.pct)} %${r.steps?.length ? ` · ${fmtDur(info.total)}` : ''}</div>
+        <div class="meta">${isCake(r) ? `${esc(C.panLabel(r.pan) || 'Kuchen')} · ${(r.parts || []).reduce((n, p) => n + (p.items || []).length, 0)} Zutaten` : `${pfLabel(r.preferments)} · ${fmtNum(r.water?.pct)} %${num(r.lamination?.pct) > 0 ? ' · 🧈 touriert' : ''}`}${r.steps?.length ? ` · ${fmtDur(info.total)}` : ''}</div>
         ${avg ? `<div class="meta">${stars(avg)} <small>${n}×</small></div>` : ''}
       </div></a>`;
   }).join('');
@@ -340,17 +350,18 @@ function vFix() {
 function vRecipe(id, tab) {
   const r = byId(id);
   if (!r) return vNotFound();
-  if (!S.scale || S.scale.id !== id) S.scale = { id, yield: { ...r.yield } };
+  if (!S.scale || S.scale.id !== id) S.scale = { id, yield: { ...r.yield }, ...cakeScaleInit(r) };
   const cover = coverOf(r);
   const info = planInfo(r.steps, 0);
   const avg = avgRating(id);
   const logs = logsFor(id);
-  const c = calc(r);
+  const c = calcFor(r);
+  const cake = isCake(r);
   const tabs = [['ing', 'Zutaten'], ['flow', 'Ablauf'], ['log', `Tagebuch${logs.length ? ` (${logs.length})` : ''}`]];
   let body = '';
   if (tab === 'flow') body = recipeFlow(r, info);
   else if (tab === 'log') body = recipeLog(r, logs);
-  else body = recipeIng(r);
+  else body = cake ? cakeIng(r) : recipeIng(r);
   const html = `
   <div class="hero ph ${cover ? 'has-img' : ''}">
     ${cover ? `<img data-photo="${cover}" alt="">` : ''}<span class="ph-emoji">${catOf(r.category).icon}</span>
@@ -367,8 +378,10 @@ function vRecipe(id, tab) {
     ${r.description ? `<p class="lead">${esc(r.description)}</p>` : ''}
     ${r.source ? `<p class="small muted" style="margin:4px 0 0">Quelle: ${/^https?:\/\/\S+$/i.test(r.source) ? `<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(r.source.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '').slice(0, 48))}</a>` : esc(r.source)}</p>` : ''}
     <div class="facts">
-      <span class="fact">💧 ${fmtPct(c.totals.hydration)}</span>
+      ${cake ? `${C.panLabel(r.pan) ? `<span class="fact">⭕ ${esc(C.panLabel(r.pan))}</span>` : ''}<span class="fact">⚖️ ≈ ${fmtG(c.total)}</span>`
+        : `<span class="fact">💧 ${fmtPct(c.totals.hydration)}${showEff(c) ? ` <small>· wirksam ${fmtPct(c.totals.hydEff)}</small>` : ''}</span>
       <span class="fact">${r.preferments?.length ? `🧱 ${pfLabel(r.preferments)}` : '⚡ direkt'}</span>
+      ${c.lam.g > 0 ? `<span class="fact">🧈 ${fmtPct(c.lam.pct)} Ziehfett</span>` : ''}`}
       ${r.steps?.length ? `<span class="fact">⏱ ${fmtDur(info.total)}</span>` : ''}
       ${avg ? `<span class="fact">★ ${fmtNum(avg)} <small>(${logs.length})</small></span>` : ''}
     </div>
@@ -418,15 +431,94 @@ function scaleChanged(r) {
 function scaleInfo(r, c) {
   const base = calc(r);
   const f = base.D > 0 ? c.D / base.D : 1;
-  return `Teig gesamt <b>${fmtG(c.D)}</b> · Mehl ${fmtG(c.F)}${Math.abs(f - 1) > 0.005 ? ` · <b>${fmtNum(f, 2)}×</b> Rezept` : ''}`;
+  return `Teig gesamt <b>${fmtG(c.D)}</b> · Mehl ${fmtG(c.F)}${c.lam?.g > 0 ? ` · davon Ziehfett ${fmtG(c.lam.g)}` : ''}${Math.abs(f - 1) > 0.005 ? ` · <b>${fmtNum(f, 2)}×</b> Rezept` : ''}`;
+}
+// Wirksame Hydration (inkl. Milch, Ei …) nur zeigen, wenn sie sich spürbar von der Wasser-Hydration unterscheidet
+const showEff = (c) => num(c.totals?.hydEff) - num(c.totals?.hydration) > 0.5;
+
+// ---------- Kuchen: Mengen umrechnen (Backform / Faktor) ----------
+const cakeScaleInit = (r) => (isCake(r) ? { cmode: C.panValid(r.pan) ? 'pan' : 'factor', pan: { ...r.pan }, factor: 1 } : {});
+const cakeOv = (st) => (st?.cmode === 'factor' || !C.panValid(st?.pan) ? { factor: num(st?.factor) > 0 ? num(st.factor) : 1 } : { pan: { ...st.pan } });
+const cakeState = (t) => (t === 'plan' ? S.plan?.ov : S.scale);
+const PAN_PRESETS = {
+  round: [[18], [20], [22], [24], [26], [28]].map(([d]) => ({ label: `Ø ${d}`, shape: 'round', d })),
+  rect: [{ label: '20 × 20', l: 20, w: 20 }, { label: 'Kasten 25', l: 25, w: 11 }, { label: 'Kasten 30', l: 30, w: 11 }, { label: '30 × 20', l: 30, w: 20 }, { label: 'Blech 40 × 30', l: 40, w: 30 }].map((x) => ({ ...x, shape: 'rect' })),
+};
+function cakeScaler(r, st, t) {
+  const base = r.pan || {}, count = base.shape === 'count', canPan = C.panValid(base);
+  const mode = canPan && st.cmode !== 'factor' ? 'pan' : 'factor';
+  const p = st.pan || {};
+  const inp = (k, v, label, w = '') => `<span class="unit-in ${w}"><input class="in" inputmode="decimal" data-change="cake" data-t="${t}" data-k="${k}" value="${v ? fmtIn(v, 1) : ''}" aria-label="${label}"><span class="u">${k === 'n' ? 'Stk' : k === 'factor' ? '×' : 'cm'}</span></span>`;
+  let body;
+  if (mode === 'factor') {
+    body = `<div class="scaler-row">${inp('factor', st.factor || 1, 'Faktor')}</div>
+      <div class="chips">${[0.5, 0.75, 1.5, 2].map((f) => `<button class="chip" data-action="cPreset" data-t="${t}" data-f="${f}">${fmtNum(f, 2)}×</button>`).join('')}</div>`;
+  } else if (count) {
+    body = `<div class="scaler-row">${inp('n', p.n, 'Anzahl')}</div>`;
+  } else {
+    const shape = p.shape === 'rect' ? 'rect' : 'round';
+    body = `<div class="seg small" style="margin:0 0 8px">${[['round', 'Rund'], ['rect', 'Eckig']].map(([k, l]) => `<button class="${shape === k ? 'on' : ''}" data-action="cShape" data-t="${t}" data-v="${k}">${l}</button>`).join('')}</div>
+      <div class="scaler-row">${shape === 'round' ? `<span class="x">Ø</span>${inp('d', p.d, 'Durchmesser')}` : `${inp('l', p.l, 'Länge')}<span class="x">×</span>${inp('w', p.w, 'Breite')}`}</div>
+      <div class="chips">${PAN_PRESETS[shape].map((x) => `<button class="chip" data-action="cPreset" data-t="${t}" data-shape="${x.shape}" data-d="${x.d || 0}" data-l="${x.l || 0}" data-w="${x.w || 0}">${x.label}</button>`).join('')}</div>`;
+  }
+  return `${canPan ? `<div class="seg small" style="margin:0 0 10px">${[['pan', count ? 'Stückzahl' : 'Backform'], ['factor', 'Faktor']].map(([k, l]) => `<button class="${mode === k ? 'on' : ''}" data-action="cMode" data-t="${t}" data-v="${k}">${l}</button>`).join('')}</div>` : ''}${body}`;
+}
+function cakeInfo(r, c) {
+  const changed = Math.abs(c.factor - 1) > 0.005;
+  return `${C.panLabel(c.pan) ? `${esc(C.panLabel(c.pan))} · ` : ''}Zutaten ≈ <b>${fmtG(c.total)}</b>${changed ? ` · <b>${fmtNum(c.factor, 2)}×</b> Rezept` : ''}${changed && r.pan?.shape !== 'count' && c.pan ? '<br><small>Die Höhe bleibt gleich – Backzeit ähnlich, bei deutlich kleinerer Form etwas früher prüfen.</small>' : ''}`;
+}
+function cakeChanged(r) {
+  const st = S.scale?.id === r.id ? S.scale : null;
+  if (!st) return false;
+  const c = C.calcCake(r, cakeOv(st));
+  return Math.abs(c.factor - 1) > 0.0001 || (st.cmode !== 'factor' && C.panLabel(st.pan) !== C.panLabel(r.pan));
+}
+function cakeIng(r) {
+  const c = C.calcCake(r, cakeOv(S.scale));
+  return `
+  <section class="card scaler">
+    <div class="card-h"><b>Menge anpassen</b>${C.panLabel(r.pan) ? `<small class="muted">Rezept: ${esc(C.panLabel(r.pan))}</small>` : ''}</div>
+    ${cakeScaler(r, S.scale, 'scale')}
+    <div class="muted small" style="margin-top:8px">${cakeInfo(r, c)}</div>
+    <div class="row gap ${cakeChanged(r) ? '' : 'hidden'}"><button class="btn sm ghost" data-action="scaleReset">Zurück zum Rezept</button>${S.scale.cmode !== 'factor' && C.panValid(S.scale.pan) && C.panValid(r.pan) ? '<button class="btn sm" data-action="scaleSave">Als Standard</button>' : ''}</div>
+  </section>
+  <div id="ing-box">${cakeBlocks(c)}</div>
+  ${r.notes ? `<details class="card"><summary>📝 Notizen</summary><p class="pre">${esc(r.notes)}</p></details>` : ''}`;
+}
+// Menge mit Einheit lesbar machen: 1,77 Eier → „1½ Stk“ (≈ 92 g)
+const FR = { 0.25: '¼', 0.5: '½', 0.75: '¾' };
+function fracTxt(v, step) {
+  const r = Math.round(v / step) * step;
+  const w = Math.floor(r + 1e-9), f = Math.round((r - w) * 100) / 100;
+  return r <= 0 ? FR[step] || fmtNum(step, 2) : `${w || ''}${f ? FR[f] || fmtNum(f, 2).replace(/^0/, '') : ''}` || '0';
+}
+function amtTxt(it) {
+  const v = it.v;
+  if (!(it.amount > 0)) return { txt: 'n. B.' };
+  if (it.unit === 'g') return { txt: fmtG(v), g: v };
+  if (it.unit === 'ml') return { txt: `${fmtNum(v, v < 20 ? 1 : 0)} ml` };
+  if (it.unit === 'Prise') return { txt: `${Math.max(1, Math.round(v))} Prise${Math.round(v) > 1 ? 'n' : ''}` };
+  const step = it.unit === 'Stk' || it.unit === 'Pck' ? 0.5 : 0.25;
+  const t = fracTxt(v, step), rounded = Math.round(v / step) * step;
+  const pg = it.unit === 'Stk' ? C.pieceGrams(it.name) : 0;
+  const hint = [pg && `≈ ${fmtG(v * pg)}${pg >= 30 ? ' (verquirlt abwiegen)' : ''}`, Math.abs(rounded - v) > 0.04 && `genau ${fmtNum(v, 2)}`].filter(Boolean).join(' · ');
+  return { txt: `${t} ${it.unit === 'Pck' ? 'Pck.' : it.unit}`, hint };
+}
+const cakeRows = (p) => p.items.map((it) => { const a = amtTxt(it); return { name: it.name || 'Zutat', txt: a.txt, g: a.g, hint: a.hint }; });
+function cakeBlocks(c) {
+  const warn = c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '';
+  if (!c.parts.length) return `${warn}<div class="empty small"><p>Noch keine Zutaten eingetragen.</p></div>`;
+  return warn + c.parts.map((p, i) => ingTable(`🥣 ${esc(p.name || 'Zutaten')}`, c.parts.length > 1 ? `Teil ${i + 1}` : '', cakeRows(p), 'main')).join('');
 }
 
 function ingTable(title, sub, rows, cls = '') {
+  // Summe nur, wenn alle Zeilen in Gramm sind (Kuchen: EL, Stk … lassen sich nicht addieren)
+  const allG = rows.length > 0 && rows.every((x) => Number.isFinite(x.g));
   const total = rows.reduce((s, x) => s + (x.g || 0), 0);
   return `<section class="ing ${cls}" ${title ? `data-tk="${esc(title.replace(/<[^>]*>/g, ''))}"` : ''}>
     ${title ? `<h3>${title}${sub ? `<small>${sub}</small>` : ''}</h3>` : ''}
-    <table>${rows.map((x) => `<tr data-action="tick"><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${fmtG(x.g)}</td></tr>`).join('')}
-    <tr class="sum"><td>Summe</td><td class="num">${fmtG(total)}</td></tr></table>
+    <table>${rows.map((x) => `<tr data-action="tick"><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${x.txt ?? fmtG(x.g)}</td></tr>`).join('')}
+    ${allG ? `<tr class="sum"><td>Summe</td><td class="num">${fmtG(total)}</td></tr>` : ''}</table>
   </section>`;
 }
 
@@ -452,16 +544,25 @@ function mainRows(c, yt) {
   c.main.extras.forEach((e) => { if (e.g > 0) rows.push({ name: e.name || 'Zutat', g: e.g }); });
   return rows;
 }
+// Ziehfett: dazu die ungefähre Größe der Butterplatte (1 cm dick, Butter ≈ 0,91 g/cm³)
+function lamRows(c) {
+  const side = Math.sqrt(c.lam.g / 0.91);
+  return [{ name: c.lam.name, hint: `Platte ca. ${fmtNum(side, 0)} × ${fmtNum(side, 0)} cm, 1 cm dick`, g: c.lam.g }];
+}
 function stageRows(c, stage, yt) {
+  if (c.kind === 'cake') { const p = c.parts.find((x) => x.id === stage); return p ? { title: p.name || 'Zutaten', rows: cakeRows(p) } : null; }
   if (stage === 'main') return { title: 'Hauptteig', rows: mainRows(c, yt) };
+  if (stage === 'lam') return c.lam?.g > 0 ? { title: 'Ziehfett', rows: lamRows(c) } : null;
   const x = c.pfs.find((p) => p.id === stage);
   return x ? { title: x.pf.name || 'Vorteig', rows: pfRows(x, yt) } : null;
 }
 
 function ingredientBlocks(c, yt, withTotals) {
+  if (c.kind === 'cake') return cakeBlocks(c);
   const warn = c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '';
   const blocks = c.pfs.map((x, i) => ingTable(`${PF_TYPES[x.pf.type]?.icon || '🥣'} ${esc(x.pf.name || 'Vorteig')}`, `Stufe ${i + 1}`, pfRows(x, yt), 'pf')).join('');
-  const main = ingTable('🌀 Hauptteig', c.pfs.length ? `Stufe ${c.pfs.length + 1}` : 'direkte Führung', mainRows(c, yt), 'main');
+  const main = ingTable(c.lam?.g > 0 ? '🌀 Grundteig' : '🌀 Hauptteig', c.pfs.length ? `Stufe ${c.pfs.length + 1}` : 'direkte Führung', mainRows(c, yt), 'main')
+    + (c.lam?.g > 0 ? ingTable('🧈 Ziehfett', 'zum Tourieren', lamRows(c), 'pf') : '');
   let totals = '';
   if (withTotals) {
     const t = c.totals;
@@ -473,11 +574,13 @@ function ingredientBlocks(c, yt, withTotals) {
       ['Salz', t.salt, (t.salt / t.flour) * 100],
       t.yeast > 0 && [yeastName(yt), t.yeast, (t.yeast / t.flour) * 100, yeastEq],
       ...c.main.extras.filter((e) => e.g > 0).map((e) => [e.name || 'Zutat', e.g, e.pct]),
+      c.lam?.g > 0 && [`${c.lam.name} (Ziehfett)`, c.lam.g, c.lam.pct],
     ].filter(Boolean);
     totals = `<details class="card totals"><summary>Σ Gesamtrezept <small class="muted">Bäckerprozente · ${fmtG(t.dough)}</small></summary>
       <section class="ing"><table>${rows.map(([n, g, pc, h]) => `<tr><td>${esc(n)}${h ? `<small>${esc(h)}</small>` : ''}</td><td class="num">${fmtG(g)}</td><td class="num pct">${fmtPct(pc)}</td></tr>`).join('')}
       ${c.pfs.length ? `<tr class="sub"><td>Mehl im Vorteig</td><td></td><td class="num pct">${fmtPct(t.pfFlourPct)}</td></tr>` : ''}
       ${t.oil > 0 ? `<tr class="sub"><td>Flüssigkeit inkl. Öl</td><td></td><td class="num pct">${fmtPct(t.hydrationOil)}</td></tr>` : ''}
+      ${showEff(c) ? `<tr class="sub"><td>Wirksame Flüssigkeit<small>Wasser + Wasseranteil von Milch, Ei, Butter …</small></td><td></td><td class="num pct">${fmtPct(t.hydEff)}</td></tr>` : ''}
       <tr class="sum"><td>Teig gesamt</td><td class="num">${fmtG(t.dough)}</td><td></td></tr></table>
     </section></details>`;
   }
@@ -506,7 +609,7 @@ function waterTempResult(r) {
 }
 
 function recipeFlow(r, info) {
-  if (!r.steps?.length) return `<div class="empty small"><p>Noch kein Ablauf hinterlegt.</p><a class="btn primary" href="#/edit/${r.id}" data-action="editAt" data-step="5">Teigführung anlegen</a></div>`;
+  if (!r.steps?.length) return `<div class="empty small"><p>Noch kein Ablauf hinterlegt.</p><a class="btn primary" href="#/edit/${r.id}" data-action="editAt" data-step="${flowStep(r)}">Ablauf anlegen</a></div>`;
   const loc = C.locationMinutes(r.steps);
   return `
   <section class="card">
@@ -525,7 +628,8 @@ function recipeFlow(r, info) {
 // Eine Zeile im Zeitstrahl: Kopf immer sichtbar, Details per Tipp aufklappbar
 function stepRow(s, when, r, extra = '', tail = '') {
   const k = kindOf(s.kind), l = locOf(s.location);
-  const stageName = s.stage === 'main' ? 'Hauptteig' : (r?.preferments || []).find((p) => p.id === s.stage)?.name;
+  const stageName = s.stage === 'main' ? 'Hauptteig' : s.stage === 'lam' ? 'Ziehfett'
+    : [...(r?.preferments || []), ...(r?.parts || [])].find((p) => p.id === s.stage)?.name;
   const details = [
     s.temp && `🌡️ ${esc(s.temp)}`,
     stageName && `Zutaten: ${esc(stageName)}`,
@@ -549,7 +653,7 @@ function recipeLog(r, logs) {
   const best = logs.filter((l) => l.rating > 0).sort((a, b) => b.rating - a.rating)[0];
   return `
   <a class="btn block" href="#/log/${r.id}/new">${icon('plus')} Neuer Eintrag</a>
-  ${best && logs.length > 1 ? `<details class="card"><summary>🏆 Bestes Ergebnis <small class="muted">${fmtDate(best.date)} · ${fmtPct(best.params?.hydration)}</small></summary>
+  ${best && logs.length > 1 ? `<details class="card"><summary>🏆 Bestes Ergebnis <small class="muted">${fmtDate(best.date)}${num(best.params?.hydration) > 0 ? ` · ${fmtPct(best.params.hydration)}` : ''}</small></summary>
     <div class="pchips">${paramChips(best.params)}</div>
     ${withHyd.length >= 2 ? hydChart(withHyd) : ''}</details>` : ''}
   ${logs.length ? logs.map((l) => logCard(l, r)).join('') : `<div class="empty small"><div class="empty-ic">📓</div><p>Noch keine Einträge. Halte nach dem Backen fest, was du verändert hast und wie es geworden ist.</p></div>`}`;
@@ -558,6 +662,7 @@ function recipeLog(r, logs) {
 function paramChips(pr, plain = false) {
   if (!pr) return '';
   const items = [
+    pr.pan && `⭕ ${esc(pr.pan)}`,
     pr.hydration && `💧 ${fmtPct(pr.hydration)}`,
     pr.pf && `🧱 ${esc(pr.pf)}`,
     pr.count && pr.pieceWeight && `⚖️ ${fmtNum(pr.count, 0)} × ${fmtNum(pr.pieceWeight, 0)} g`,
@@ -584,7 +689,7 @@ function logCard(l, r) {
     ${(l.photos || []).length ? `<div class="thumbs">${l.photos.map((p) => `<button class="ph thumb" data-action="viewPhoto" data-id="${p}"><img data-photo="${p}" alt=""></button>`).join('')}</div>` : ''}
     <div class="act-row">
       <button class="btn sm" data-action="bakeAgain" data-id="${l.id}">${icon('play')} So nochmal backen</button>
-      <button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button>
+      ${isCake(r) ? '' : `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button>`}
       <a class="icon-btn" href="#/log/${r.id}/${l.id}" aria-label="Bearbeiten">${icon('edit')}</a>
     </div>
   </details>`;
@@ -612,6 +717,10 @@ function hydChart(logs) {
 
 // ---------- Editor (Schritt-für-Schritt) ----------
 const WIZ = ['Grunddaten', 'Teigmenge', 'Mehl & Wasser', 'Vorteig', 'Salz, Hefe & Co.', 'Teigführung', 'Fotos & Notizen'];
+// Kuchen: eigener, kürzerer Ablauf (Zutatenliste statt Bäckerprozente)
+const WIZ_CAKE = ['Grunddaten', 'Form & Menge', 'Zutaten', 'Ablauf', 'Fotos & Notizen'];
+const wizFor = (d) => (isCake(d) ? { t: WIZ_CAKE, b: [wBasis, wPan, wCakeIng, wAblauf, wDetails] } : { t: WIZ, b: [wBasis, wMenge, wMehl, wVorteig, wZutaten, wAblauf, wDetails] });
+const flowStep = (r) => (isCake(r) ? 3 : 5);
 
 // Ungespeicherten Entwurf verwerfen – inkl. der dafür neu hochgeladenen Fotos
 function discardDraft() {
@@ -635,21 +744,22 @@ function vEdit(id) {
     S.wizStart = null;
   }
   if (!S.draft) return templatePicker();
-  const d = S.draft, w = S.wiz;
-  const bodies = [wBasis, wMenge, wMehl, wVorteig, wZutaten, wAblauf, wDetails];
+  const d = S.draft;
+  const { t: titles, b: bodies } = wizFor(d);
+  const w = S.wiz = Math.min(S.wiz, titles.length - 1);
   const html = `
   <header class="top sub">
     <button class="icon-btn" data-action="editCancel" aria-label="Abbrechen">${icon('x')}</button>
-    <div class="grow"><div class="eyebrow">${d._new ? 'Neues Rezept' : esc(d.name || 'Rezept')} · Schritt ${w + 1}/${WIZ.length}</div><h1 class="title sm">${WIZ[w]}</h1></div>
+    <div class="grow"><div class="eyebrow">${d._new ? 'Neues Rezept' : esc(d.name || 'Rezept')} · Schritt ${w + 1}/${titles.length}</div><h1 class="title sm">${titles[w]}</h1></div>
     <button class="btn sm primary" data-action="editSave">Speichern</button>
   </header>
-  <nav class="wiz-dots">${WIZ.map((t, i) => `<button data-action="wizGo" data-i="${i}" class="${i === w ? 'on' : i < w ? 'done' : ''}" aria-label="${t}"><span>${i + 1}</span><small>${t}</small></button>`).join('')}</nav>
+  <nav class="wiz-dots">${titles.map((t, i) => `<button data-action="wizGo" data-i="${i}" class="${i === w ? 'on' : i < w ? 'done' : ''}" aria-label="${t}"><span>${i + 1}</span><small>${t}</small></button>`).join('')}</nav>
   <div class="pad wiz-body">${bodies[w](d)}</div>
   <div class="wiz-foot">
-    <div class="live" data-live="summary" data-html>${liveSummary(calc(d), d)}</div>
+    <div class="live" data-live="summary" data-html>${liveSummary(calcFor(d), d)}</div>
     <div class="row gap">
       <button class="btn ghost" data-action="wizPrev" ${w === 0 ? 'disabled' : ''}>Zurück</button>
-      ${w < WIZ.length - 1 ? `<button class="btn primary grow" data-action="wizNext">Weiter: ${WIZ[w + 1]}</button>` : `<button class="btn primary grow" data-action="editSave">${icon('check')} Rezept speichern</button>`}
+      ${w < titles.length - 1 ? `<button class="btn primary grow" data-action="wizNext">Weiter: ${titles[w + 1]}</button>` : `<button class="btn primary grow" data-action="editSave">${icon('check')} Rezept speichern</button>`}
     </div>
   </div>`;
   return { html, after: liveDraft };
@@ -701,14 +811,19 @@ function templatePicker() {
   <header class="top sub"><a class="icon-btn" href="#/" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Neues Rezept</div><h1 class="title sm">Womit startest du?</h1></div></header>
   <div class="pad">
     <a class="tpl ki-tpl" href="#/ki"><span class="tpl-ic">📷</span><span><b>Aus Bild, Link oder Text</b><small>Screenshot, Foto, Webseite oder Videobeschreibung – eine KI deiner Wahl liest das Rezept aus.</small></span></a>
-    <p class="muted">Oder wähle eine Vorlage – Mengen, Vorteig und Ablauf sind schon ausgefüllt und lassen sich Schritt für Schritt anpassen.</p>
-    <div class="tpl-grid">
-      ${TEMPLATES.map((t) => `<button class="tpl" data-action="pickTpl" data-t="${t.id}"><span class="tpl-ic">${t.icon}</span><b>${t.name}</b><small>${t.desc}</small></button>`).join('')}
-      <button class="tpl blank" data-action="pickBlank" data-c="pizza"><span class="tpl-ic">➕🍕</span><b>Leeres Pizzarezept</b><small>Alles selbst eingeben</small></button>
-      <button class="tpl blank" data-action="pickBlank" data-c="bread"><span class="tpl-ic">➕🍞</span><b>Leeres Brotrezept</b><small>Alles selbst eingeben</small></button>
-    </div>
+    <p class="muted">Oder wähle eine Vorlage – Mengen und Ablauf sind schon ausgefüllt und lassen sich Schritt für Schritt anpassen.</p>
+    ${catsShown().filter((k) => k !== 'other').map((k) => {
+      const list = TEMPLATES.filter((t) => tplCat(t) === k);
+      const blank = { pizza: 'Leeres Pizzarezept', bread: 'Leeres Brotrezept', fine: 'Leeres Feingebäck', cake: 'Leerer Kuchen' }[k];
+      return `<h3 class="sec">${CAT[k].icon} ${k === 'cake' ? 'Kuchen & Torten' : k === 'fine' ? 'Feingebäck · Croissant, Plunder, Hefeteig' : CAT[k].label}</h3>
+      <div class="tpl-grid">
+        ${list.map((t) => `<button class="tpl" data-action="pickTpl" data-t="${t.id}"><span class="tpl-ic">${t.icon}</span><b>${t.name}</b><small>${t.desc}</small></button>`).join('')}
+        <button class="tpl blank" data-action="pickBlank" data-c="${k}"><span class="tpl-ic">➕${CAT[k].icon}</span><b>${blank}</b><small>${k === 'cake' ? 'Zutaten in g, Stk, EL …' : 'Alles selbst eingeben'}</small></button>
+      </div>`;
+    }).join('')}
   </div>` };
 }
+const tplCat = (t) => t.cat || (t.id === 'sourdough' ? 'bread' : 'pizza');
 
 const fld = (label, inner, hint = '') => `<label class="fld"><span class="fld-l">${label}</span>${inner}${hint ? `<span class="fld-h">${hint}</span>` : ''}</label>`;
 const fldU = (label, input, unit, hint = '') => fld(label, `<span class="unit-in">${input}<span class="u">${unit}</span></span>`, hint);
@@ -723,6 +838,7 @@ function gramDef(key) {
   if (a === 'salt') return { get: (c) => c.totals.salt, pct: () => num(d.salt), set: (v) => { d.salt = v; } };
   if (a === 'yeast') return { get: (c) => c.main.yeast, pct: () => num(d.yeastPct), set: (v) => { d.yeastPct = v; } };
   if (a === 'ex') { const e = d.extras[+b]; return { get: (c) => c.main.extras[+b]?.g || 0, pct: () => num(e?.pct), set: (v) => { e.pct = v; } }; }
+  if (a === 'lam') return { get: (c) => c.lam?.g || 0, pct: () => num(d.lamination?.pct), set: (v) => { d.lamination = { ...(d.lamination || {}), pct: Math.max(0, v) }; } };
   if (a === 'pf') {
     const pf = d.preferments[+b];
     // Gramm-Felder zeigen die FRISCH zugegebenen Mengen (wie im Rezepttext) – ohne Mehl/Wasser im Anstellgut
@@ -787,7 +903,8 @@ function wBasis(d) {
   return `
   ${fld('Name', txtIn('name', d.name, 'z. B. Pizza Napoletana mit Biga'))}
   <div class="fld"><span class="fld-l">Kategorie</span>
-    <div class="seg">${Object.entries(CAT).map(([k, v]) => `<button class="${d.category === k ? 'on' : ''}" data-action="setCat" data-v="${k}">${v.icon} ${v.label}</button>`).join('')}</div>
+    <div class="seg wrap">${catsShown(d.category).map((k) => `<button class="${d.category === k ? 'on' : ''}" data-action="setCat" data-v="${k}">${CAT[k].icon} ${CAT[k].label}</button>`).join('')}</div>
+    ${isCake(d) ? '<small class="fld-h">Kuchen: Zutaten in g, ml, Stk, EL … – umrechnen auf jede Backform.</small>' : d.category === 'fine' ? '<small class="fld-h">Feingebäck: Hefeteig mit Milch, Ei, Butter – optional mit Ziehfett zum Tourieren.</small>' : ''}
   </div>
   ${fld('Kurzbeschreibung', `<textarea class="in" rows="2" data-bind="d.description" placeholder="Was macht dieses Rezept aus?">${esc(d.description)}</textarea>`)}
   ${fld('Quelle <small class="muted">(optional)</small>', txtIn('source', d.source || '', 'Link oder Buch, z. B. https://…'))}
@@ -796,7 +913,7 @@ function wBasis(d) {
 
 function wMenge(d) {
   const cat = catOf(d.category), y = d.yield;
-  const presets = d.category === 'bread' ? [500, 750, 900, 1000, 1500] : [200, 230, 250, 260, 280];
+  const presets = d.category === 'bread' ? [500, 750, 900, 1000, 1500] : d.category === 'fine' ? [50, 70, 85, 100, 500] : [200, 230, 250, 260, 280];
   return `
   <div class="seg">
     <button class="${y.mode !== 'flour' ? 'on' : ''}" data-action="setYieldMode" data-v="pieces">Nach ${cat.pieces}</button>
@@ -812,7 +929,7 @@ function wMenge(d) {
     ${fldU(`Gewicht pro ${cat.piece}`, numIn('yield.pieceWeight', y.pieceWeight, 'id="d-pw"'), 'g')}
     <div class="chips">${presets.map((g) => `<button class="chip" data-action="setPw" data-v="${g}">${g} g</button>`).join('')}</div>
   `}
-  ${fldU('Zuschlag für Verlust', numIn('yield.loss', y.loss), '%', 'Teig, der in Schüssel und Kneter hängen bleibt – meist 0–3 %.')}
+  ${fldU('Zuschlag für Verlust', numIn('yield.loss', y.loss), '%', d.category === 'fine' ? 'Teigreste und Verschnitt beim Zuschneiden – bei Croissants meist 5–10 %.' : 'Teig, der in Schüssel und Kneter hängen bleibt – meist 0–3 %.')}
   <div class="result-grid">
     <div><small>Teig gesamt</small><b data-live="dough"></b></div>
     <div><small>Mehl gesamt</small><b data-live="flour"></b></div>
@@ -831,7 +948,8 @@ function flourLib(d) {
 }
 
 function wMehl(d) {
-  const hydHints = [[60, 'fest'], [65, 'klassisch'], [68, 'Napoli'], [70, 'luftig'], [75, 'Sauerteig'], [80, 'Teglia']];
+  const fine = d.category === 'fine';
+  const hydHints = fine ? [[0, 'nur Milch/Ei'], [25, 'mit Milch'], [30, 'Croissant'], [55, 'nur Wasser']] : [[60, 'fest'], [65, 'klassisch'], [68, 'Napoli'], [70, 'luftig'], [75, 'Sauerteig'], [80, 'Teglia']];
   return `
   <div class="fld"><span class="fld-l">Mehlmischung <small class="muted">(Anteile am Gesamtmehl)</small></span>
     ${(d.flours || []).map((f, i) => `<div class="row gap line">
@@ -848,7 +966,7 @@ function wMehl(d) {
     <div id="flour-lib-box">${flourLib(d)}</div>
   </div>
   <div class="link-card">
-    <div class="link-h"><b>💧 Wasser</b><small>Gib Hydration <u>oder</u> Wassermenge ein – das andere wird berechnet.</small></div>
+    <div class="link-h"><b>💧 Wasser</b><small>Gib Hydration <u>oder</u> Wassermenge ein – das andere wird berechnet.${fine ? ' Milch, Ei und Butter trägst du unter „Salz, Hefe &amp; Co.“ ein.' : ''}</small></div>
     <div class="link-row">
       <span class="unit-in"><input class="in big" inputmode="decimal" data-input="link" data-link="water" data-unit="pct" value="${fmtIn(d.water.pct)}" aria-label="Hydration in Prozent"><span class="u">%</span></span>
       <span class="link-arrow">⇄</span>
@@ -916,7 +1034,10 @@ function wVorteig(d) {
 }
 
 function wZutaten(d) {
-  const presets = ['Zucker', 'Diastatisches Malz', 'Honig', 'Milchpulver', 'Saaten', 'Kochstück'];
+  const fine = d.category === 'fine';
+  const presets = (fine ? ['Milch', 'Vollei', 'Eigelb', 'Butter', 'Zucker', 'Vanillezucker', 'Zitronenabrieb', 'Rosinen', 'Sahne', 'Quark']
+    : ['Zucker', 'Diastatisches Malz', 'Honig', 'Milchpulver', 'Saaten', 'Kochstück', 'Milch', 'Butter']).filter((n) => !(d.extras || []).some((e) => e.name === n));
+  const lam = d.lamination || {};
   return `
   ${unitSeg()}
   <div class="fld"><span class="fld-l">Hefe-Art <small class="muted">(gilt für das ganze Rezept)</small></span>
@@ -938,14 +1059,70 @@ function wZutaten(d) {
       <summary><span class="btn sm ghost">${icon('plus')} Zutat hinzufügen</span></summary>
       <div class="chips">${presets.map((n) => `<button class="chip" data-action="addExtra" data-v="${n}">${n}</button>`).join('')}<button class="chip" data-action="addExtra" data-v="">Eigene …</button></div>
     </details>
+    <small class="muted" data-live="hydEff"></small>
   </div>
+  ${fine || num(lam.pct) > 0 ? `<details class="card" ${num(lam.pct) > 0 ? 'open' : ''}>
+    <summary>🧈 Ziehfett zum Tourieren <small class="muted">${num(lam.pct) > 0 ? fmtPct(lam.pct) : 'optional · Croissant, Plunder'}</small></summary>
+    <p class="muted small" style="margin-top:0">Butter bzw. Ziehfett, das in den Grundteig eingeschlagen wird. Üblich: 40–60 % vom Mehl (Croissant ≈ 50 %). Es zählt zum Teiggewicht der Stücke.</p>
+    <div class="grid2">
+      ${amt('lam', 'Ziehfett', 'vom Mehl')}
+      ${fld('Fett', `<input class="in" data-bind="d.lamination.name" value="${esc(lam.name || '')}" placeholder="Butter (Tourierbutter)">`)}
+    </div>
+    <small class="muted" data-live="lamHint"></small>
+  </details>` : ''}
   ${fldU('Zielteigtemperatur', numIn('ddt', d.ddt ?? 24), '°C', 'für den Wassertemperatur-Rechner')}`;
+}
+
+// ---------- Editor: Kuchen & Torten ----------
+function wPan(d) {
+  const p = d.pan || {};
+  const inp = (k, label, unit) => fldU(label, `<input class="in" inputmode="decimal" data-bind="d.pan.${k}" data-num value="${num(p[k]) > 0 ? fmtIn(p[k], 1) : ''}">`, unit);
+  return `
+  <div class="fld"><span class="fld-l">Für welche Form ist das Rezept?</span>
+    <div class="seg">${[['round', '⭕ Rund'], ['rect', '▭ Eckig'], ['count', '🧁 Stück'], ['', 'keine Angabe']].map(([k, l]) => `<button class="${(p.shape || '') === k ? 'on' : ''}" data-action="setPanShape" data-v="${k}">${l}</button>`).join('')}</div>
+  </div>
+  ${p.shape === 'round' ? `${inp('d', 'Durchmesser', 'cm')}<div class="chips">${[18, 20, 22, 24, 26, 28].map((x) => `<button class="chip" data-action="setPan" data-shape="round" data-d="${x}">Ø ${x}</button>`).join('')}</div>`
+    : p.shape === 'rect' ? `<div class="grid2">${inp('l', 'Länge', 'cm')}${inp('w', 'Breite', 'cm')}</div><div class="chips">${PAN_PRESETS.rect.map((x) => `<button class="chip" data-action="setPan" data-shape="rect" data-l="${x.l}" data-w="${x.w}">${x.label}</button>`).join('')}</div>`
+    : p.shape === 'count' ? `${inp('n', 'Anzahl', 'Stück')}<p class="muted small">z. B. Muffins, Cupcakes, Kekse – umgerechnet wird nach Stückzahl.</p>`
+    : '<p class="muted small">Ohne Form lässt sich das Rezept nur per Faktor (z. B. 1,5×) umrechnen.</p>'}
+  <div class="hint-card small"><div>ⓘ Beim Backen kannst du auf jede andere Form umrechnen – z. B. von Ø 26 auf Ø 20 cm. Gerechnet wird nach Fläche, die Höhe bleibt gleich.</div></div>`;
+}
+
+const CAKE_PRESETS = [['Mehl', 'g'], ['Zucker', 'g'], ['Butter', 'g'], ['Eier', 'Stk'], ['Milch', 'ml'], ['Backpulver', 'Pck'], ['Vanillezucker', 'Pck'], ['Salz', 'Prise'], ['Speisestärke', 'g'], ['Sahne', 'ml'], ['Quark', 'g'], ['Kakaopulver', 'g']];
+function wCakeIng(d) {
+  const parts = d.parts || [];
+  return `
+  <p class="muted small" style="margin-top:0">Mengen wie im Originalrezept – für die Form aus Schritt 2. Umgerechnet wird später automatisch.</p>
+  ${parts.map((p, pi) => `<section class="card cake-part">
+    <div class="row gap"><span class="pf-ic">🥣</span><input class="in grow strong" data-bind="d.parts.${pi}.name" value="${esc(p.name)}" placeholder="z. B. Teig, Füllung, Creme" aria-label="Name des Bestandteils">
+      ${parts.length > 1 ? `<button class="icon-btn" data-action="delPart" data-i="${pi}" aria-label="Bestandteil entfernen">${icon('trash')}</button>` : ''}</div>
+    ${(p.items || []).map((it, ii) => `<div class="row gap line cake-item">
+      <input class="in grow" data-bind="d.parts.${pi}.items.${ii}.name" value="${esc(it.name)}" placeholder="Zutat" aria-label="Zutat">
+      <input class="in w70" inputmode="decimal" data-bind="d.parts.${pi}.items.${ii}.amount" data-num value="${num(it.amount) > 0 ? fmtIn(it.amount) : ''}" placeholder="n. B." aria-label="Menge">
+      <select class="in w80" data-bind="d.parts.${pi}.items.${ii}.unit" aria-label="Einheit">${C.UNITS.map((u) => `<option ${it.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select>
+      <button class="icon-btn" data-action="delItem" data-p="${pi}" data-i="${ii}" aria-label="Zutat entfernen">${icon('x')}</button>
+    </div>`).join('')}
+    <details class="addmore" ${(p.items || []).length ? '' : 'open'}>
+      <summary><span class="btn sm ghost">${icon('plus')} Zutat</span><small class="muted" data-live="part-${pi}"></small></summary>
+      <div class="chips">${CAKE_PRESETS.filter(([n]) => !(p.items || []).some((x) => x.name === n)).map(([n, u]) => `<button class="chip" data-action="addItem" data-p="${pi}" data-v="${n}" data-u="${u}">${n}</button>`).join('')}<button class="chip" data-action="addItem" data-p="${pi}" data-v="" data-u="g">Eigene …</button></div>
+    </details>
+  </section>`).join('')}
+  <details class="addmore">
+    <summary><span class="btn sm">${icon('plus')} Bestandteil hinzufügen</span></summary>
+    <div class="chips">${['Boden', 'Füllung', 'Creme', 'Streusel', 'Glasur', 'Belag'].map((n) => `<button class="chip" data-action="addPart" data-v="${n}">${n}</button>`).join('')}<button class="chip" data-action="addPart" data-v="">Eigener …</button></div>
+    <p class="muted small">Bestandteile werden getrennt angezeigt – und beim Backen genau im passenden Schritt.</p>
+  </details>`;
 }
 
 function wAblauf(d) {
   const steps = d.steps || [];
   const pfs = d.preferments || [];
-  const addKinds = [['prep', 'Vorteig'], ['autolyse', 'Autolyse'], ['mix', 'Mischen'], ['bulk', 'Stockgare'], ['fold', 'Dehnen & Falten'], ['shape', 'Formen'], ['proof', 'Stückgare'], ['temper', 'Akklimatisieren'], ['preheat', 'Vorheizen'], ['bake', 'Backen'], ['other', 'Sonstiges']];
+  const cake = isCake(d), lam = num(d.lamination?.pct) > 0;
+  const addKinds = cake ? [['mix', 'Rühren / Mischen'], ['rest', 'Kühlen / Ruhen'], ['shape', 'Form auslegen'], ['preheat', 'Vorheizen'], ['bake', 'Backen'], ['cool', 'Auskühlen'], ['assemble', 'Füllen'], ['other', 'Sonstiges']]
+    : [['prep', 'Vorteig'], ['autolyse', 'Autolyse'], ['mix', 'Mischen'], ['bulk', 'Stockgare'], ['fold', 'Dehnen & Falten'], ...(lam || d.category === 'fine' ? [['laminate', 'Tourieren']] : []), ['shape', 'Formen'], ['proof', 'Stückgare'], ['temper', 'Akklimatisieren'], ['preheat', 'Vorheizen'], ['bake', 'Backen'], ['other', 'Sonstiges']];
+  // Welche Zutaten ein Schritt beim Backen zeigen kann
+  const stageOpts = cake ? (d.parts || []).map((p) => [p.id, p.name || 'Zutaten'])
+    : [...pfs.map((p) => [p.id, p.name]), ['main', lam ? 'Grundteig' : 'Hauptteig'], ...(lam ? [['lam', 'Ziehfett']] : [])];
   return `
   <div class="result-grid">
     <div><small>Gesamtdauer</small><b data-live="total"></b></div>
@@ -964,7 +1141,7 @@ function wAblauf(d) {
       ${open ? `<div class="se-b">
         ${fld('Bezeichnung', `<input class="in" data-bind="d.steps.${i}.name" value="${esc(s.name)}">`)}
         <div class="grid2">
-          ${fld('Art', `<select class="in" data-bind="d.steps.${i}.kind" data-rerender>${Object.entries(STEP_KINDS).map(([kk, v]) => `<option value="${kk}" ${s.kind === kk ? 'selected' : ''}>${v.icon} ${v.label}</option>`).join('')}</select>`)}
+          ${fld('Art', `<select class="in" data-bind="d.steps.${i}.kind" data-rerender>${Object.entries(STEP_KINDS).filter(([kk]) => kk === s.kind || (cake ? !['prep', 'autolyse', 'bulk', 'fold', 'laminate', 'proof', 'temper'].includes(kk) : kk !== 'assemble')).map(([kk, v]) => `<option value="${kk}" ${s.kind === kk ? 'selected' : ''}>${v.icon} ${v.label}</option>`).join('')}</select>`)}
           ${fld('Dauer', `<div class="row gap dur"><span class="unit-in"><input class="in" inputmode="numeric" data-input="dur" data-i="${i}" data-part="h" value="${hh}"><span class="u">h</span></span><span class="unit-in"><input class="in" inputmode="numeric" data-input="dur" data-i="${i}" data-part="m" value="${mm}"><span class="u">min</span></span></div>`)}
         </div>
         <div class="fld"><span class="fld-l">Wo?</span><div class="seg small">${Object.entries(LOCATIONS).map(([kk, v]) => `<button class="${s.location === kk ? 'on' : ''}" data-action="stepLoc" data-i="${i}" data-v="${kk}">${v.icon} ${v.short}</button>`).join('')}</div></div>
@@ -973,7 +1150,7 @@ function wAblauf(d) {
           <summary>Weitere Optionen <small class="muted">${[s.temp && esc(s.temp), s.stage && 'Zutaten', s.parallel && 'parallel', s.repeat && `${s.repeat.count}× Erinnerung`].filter(Boolean).join(' · ')}</small></summary>
           <div class="grid2">
             ${fld('Temperatur', `<input class="in" data-bind="d.steps.${i}.temp" value="${esc(s.temp)}" placeholder="z. B. 24–26 °C">`, feat('tempComp') && ['bulk', 'rest', 'proof', 'fold'].includes(s.kind) && s.location !== 'fridge' ? 'Basis für den Temperatur-Ausgleich' : '')}
-            ${fld('Zutaten zeigen', `<select class="in" data-bind="d.steps.${i}.stage"><option value="">–</option>${pfs.map((p) => `<option value="${p.id}" ${s.stage === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="main" ${s.stage === 'main' ? 'selected' : ''}>Hauptteig</option></select>`, 'beim Backen in diesem Schritt')}
+            ${fld('Zutaten zeigen', `<select class="in" data-bind="d.steps.${i}.stage"><option value="">–</option>${stageOpts.map(([v, l]) => `<option value="${esc(v)}" ${s.stage === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`, 'beim Backen in diesem Schritt')}
           </div>
           ${i > 0 ? `<label class="check"><input type="checkbox" data-bind="d.steps.${i}.parallel" ${s.parallel ? 'checked' : ''}> Parallel zum vorherigen Schritt</label>` : ''}
           <label class="check"><input type="checkbox" data-action="toggleRepeat" data-i="${i}" ${s.repeat ? 'checked' : ''}> Wiederkehrende Erinnerung <small class="muted">(Dehnen &amp; Falten)</small></label>
@@ -1006,8 +1183,12 @@ function wDetails(d) {
 
 function liveSummary(c, d) {
   const cat = catOf(d.category);
+  if (c.kind === 'cake') {
+    const n = c.parts.reduce((s, p) => s + p.items.length, 0);
+    return `<span>${cat.icon} ${esc(C.panLabel(d.pan) || 'ohne Form')}</span><span><b>${n}</b> Zutaten</span><span>≈ <b>${fmtG(c.total)}</b></span>`;
+  }
   const qty = d.yield.mode === 'flour' ? `<b>${fmtG(c.D)}</b> Teig` : `${fmtNum(d.yield.count, 0)} × ${fmtNum(d.yield.pieceWeight, 0)} g`;
-  return `<span>${cat.icon} ${qty}</span><span>Mehl <b>${fmtG(c.F)}</b></span><span>Wasser <b>${fmtG(c.totals.water)}</b></span><span>💧 <b>${fmtPct(c.totals.hydration)}</b></span>${c.warnings.length ? `<span class="w">⚠️ ${c.warnings.length}</span>` : ''}`;
+  return `<span>${cat.icon} ${qty}</span><span>Mehl <b>${fmtG(c.F)}</b></span>${c.lam?.g > 0 ? `<span>🧈 <b>${fmtG(c.lam.g)}</b></span>` : `<span>Wasser <b>${fmtG(c.totals.water)}</b></span>`}<span>💧 <b>${fmtPct(showEff(c) ? c.totals.hydEff : c.totals.hydration)}</b>${showEff(c) ? ' <small>wirksam</small>' : ''}</span>${c.warnings.length ? `<span class="w">⚠️ ${c.warnings.length}</span>` : ''}`;
 }
 
 function hydHint(h) {
@@ -1022,13 +1203,23 @@ function hydHint(h) {
 function liveDraft() {
   const d = S.draft;
   if (!d) return;
+  if (isCake(d)) {
+    const c = C.calcCake(d), info = planInfo(d.steps, 0);
+    const L = { summary: liveSummary(c, d), total: d.steps?.length ? fmtDur(info.total) : '–', bakeOff: d.steps?.length ? fmtDur(info.bakeOff) : '–' };
+    c.parts.forEach((p, i) => { L[`part-${i}`] = p.items.length ? `${p.items.length} Zutaten${p.g > 0 ? ` · ≈ ${fmtG(p.g)}` : ''}` : ''; });
+    (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = fmtDur(s.durationMin); });
+    $$('[data-live]').forEach((el) => { const k = el.dataset.live; if (k in L) { if (el.hasAttribute('data-html')) el.innerHTML = L[k]; else el.textContent = L[k]; } });
+    return;
+  }
   const c = calc(d);
   const info = planInfo(d.steps, 0);
   const blendSum = (d.flours || []).reduce((s, f) => s + num(f.pct), 0);
   const L = {
     summary: liveSummary(c, d), dough: fmtG(c.D), flour: fmtG(c.F), count: fmtNum(c.count, 1),
     blendSum: `${fmtNum(blendSum)} %${Math.abs(blendSum - 100) > 0.5 ? ' ⚠️' : ' ✓'}`,
-    hydHint: hydHint(c.totals.hydration), hydOil: fmtPct(c.totals.hydrationOil),
+    hydHint: d.category === 'fine' ? `Wirksame Flüssigkeit inkl. Milch, Ei & Butter: ${fmtPct(c.totals.hydEff)} – bei Feingebäck meist 50–60 %.` : hydHint(c.totals.hydration), hydOil: fmtPct(c.totals.hydrationOil),
+    hydEff: showEff(c) ? `💧 Wirksame Flüssigkeit inkl. Milch, Ei & Butter: ${fmtPct(c.totals.hydEff)}` : '',
+    lamHint: c.lam.g > 0 ? `Grundteig ${fmtG(c.lam.base)} + Ziehfett ${fmtG(c.lam.g)} (${fmtPct(c.lam.base > 0 ? (c.lam.g / c.lam.base) * 100 : 0)} vom Grundteig) · Platte ca. ${fmtNum(Math.sqrt(c.lam.g / 0.91), 0)} × ${fmtNum(Math.sqrt(c.lam.g / 0.91), 0)} cm` : '',
     iceHint: c.main.ice > 0 ? `Hauptteig: ${fmtG(Math.max(0, c.main.water) - c.main.ice)} Wasser + ${fmtG(c.main.ice)} Eis` : `Wasser im Hauptteig: ${fmtG(Math.max(0, c.main.water))}`,
     salt: fmtG(c.totals.salt),
     yeast: `${fmtG(c.main.yeast)} im Hauptteig · gesamt ${fmtG(c.totals.yeast)}`,
@@ -1076,15 +1267,22 @@ function vPlan(id) {
   const base = planInfo(steps, 0);
   if (!r.steps?.length) {
     return { html: `<header class="top sub"><a class="icon-btn" href="#/r/${id}">${icon('back')}</a><div class="grow"><div class="eyebrow">Backen planen</div><h1 class="title sm">${esc(r.name)}</h1></div></header>
-      <div class="pad empty"><div class="empty-ic">🗓️</div><p>Für die Planung braucht das Rezept eine Teigführung (Schritte mit Dauer).</p><button class="btn primary" data-action="editAt" data-id="${id}" data-step="5">Teigführung anlegen</button></div>` };
+      <div class="pad empty"><div class="empty-ic">🗓️</div><p>Für die Planung braucht das Rezept einen Ablauf (Schritte mit Dauer).</p><button class="btn primary" data-action="editAt" data-id="${id}" data-step="${flowStep(r)}">Ablauf anlegen</button></div>` };
   }
   const now = Math.floor(Date.now() / 60000) * 60000;
   const start = P.mode === 'now' ? now : P.mode === 'bake' ? P.at - base.bakeOff * 60000 : P.at;
   const info = planInfo(steps, start);
   const night = info.tl.filter((s) => C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo));
   const hasAdj = Object.keys(P.adj || {}).length > 0;
-  const c = calc(r, planOv(r));
+  const cake = isCake(r);
+  const c = calcFor(r, planOv(r));
   const cat = catOf(r.category);
+  const qtyCard = cake ? `<section class="card scaler">
+      <div class="card-h"><b>Menge für diesen Backtag</b>${C.panLabel(r.pan) ? `<small class="muted">Rezept: ${esc(C.panLabel(r.pan))}</small>` : ''}</div>
+      ${cakeScaler(r, P.ov, 'plan')}
+      <div class="muted small" style="margin-top:8px">${cakeInfo(r, c)}</div>
+      <small class="muted">Zeiten bleiben gleich · das Rezept selbst bleibt unverändert.</small>
+    </section>` : '';
   const html = `
   <header class="top sub"><a class="icon-btn" href="#/r/${id}" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Backen planen</div><h1 class="title sm">${esc(r.name)}</h1></div></header>
   <div class="pad">
@@ -1103,7 +1301,7 @@ function vPlan(id) {
     ${night.length ? `<div class="hint-card warnc"><div>🌙 <b>${night.length} Schritt${night.length > 1 ? 'e' : ''} in der Nacht</b><br><small>${night.slice(0, 3).map((s) => `${new Intl.DateTimeFormat('de-DE', { weekday: 'short' }).format(s.start)} ${fmtTime(s.start)}`).join(' · ')}${night.length > 3 ? ' …' : ''}</small></div>
       ${feat('nightOpt') ? '<button class="btn sm primary" data-action="nightOpt">🪄 Anpassen</button>' : ''}</div>` : ''}
     ${hasAdj ? `<div class="hint-card good"><div>🪄 ${steps.filter((s) => s._adj).map((s) => `${esc(s.name)} ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`).join(' · ')}</div><button class="btn sm ghost" data-action="nightReset">Zurück</button></div>` : ''}
-    <section class="card scaler">
+    ${cake ? qtyCard : `<section class="card scaler">
       <div class="card-h"><b>Menge für diesen Backtag</b></div>
       <div class="seg small" style="margin:0 0 10px">${[['pieces', cat.pieces], ['flour', 'Mehl']].map(([k, l]) => `<button class="${(P.ov.ymode === 'flour' ? 'flour' : 'pieces') === k ? 'on' : ''}" data-action="planYMode" data-v="${k}">${l}</button>`).join('')}</div>
       ${P.ov.ymode === 'flour'
@@ -1123,7 +1321,7 @@ function vPlan(id) {
         ${fldU('Hydration', `<input class="in" inputmode="decimal" data-change="planOv" data-k="hydration" value="${fmtIn(P.ov.hydration)}">`, '%')}
         ${feat('tempComp') ? fldU('Raumtemperatur', `<input class="in" inputmode="decimal" data-change="planOv" data-k="room" value="${P.ov.room !== undefined && P.ov.room !== '' ? fmtIn(P.ov.room, 1) : ''}" placeholder="${fmtIn(S.settings.refRoom, 1)}">`, '°C', 'Gare-Zeiten werden angepasst') : ''}
       </div>
-    </details>
+    </details>`}
     <h3 class="sec">Zeitplan</h3>
     <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '')).join('')}
       <li class="tl-i end"><div class="tl-dot">🎉</div><div class="tl-c"><div class="tl-h"><b>Fertig</b><span class="tl-when">${fmtRel(info.endAt)}</span></div></div></li>
@@ -1142,6 +1340,10 @@ function initPlan(r) {
   while (target.getTime() - base.bakeOff * 60000 < Date.now()) target = new Date(target.getTime() + 86400000);
   // Eine im Rezept eingestellte Menge (z. B. 4 × 280 g) wird für den Backtag übernommen
   const y = S.scale?.id === r.id ? S.scale.yield : r.yield;
+  if (isCake(r)) {
+    const st = S.scale?.id === r.id ? S.scale : cakeScaleInit(r);
+    return { id: r.id, mode: 'now', at: target.getTime(), ov: { cmode: st.cmode, pan: { ...st.pan }, factor: st.factor } };
+  }
   return { id: r.id, mode: 'now', at: target.getTime(),
     ov: { ymode: y.mode === 'flour' ? 'flour' : 'pieces', count: y.count, pieceWeight: y.pieceWeight, flour: y.flour, hydration: r.water.pct } };
 }
@@ -1186,6 +1388,7 @@ function optimizeNight(r) {
 
 function planOv(r) {
   const o = S.plan.ov;
+  if (isCake(r)) return cakeOv(o);
   const flourMode = (o.ymode || r.yield.mode) === 'flour';
   return { yield: flourMode ? { mode: 'flour', flour: num(o.flour) } : { mode: 'pieces', count: num(o.count), pieceWeight: num(o.pieceWeight) }, hydration: num(o.hydration) };
 }
@@ -1315,7 +1518,8 @@ function vSession(sid) {
       return stepRow(x, when, r, `${x.doneAt ? 'done' : ''} ${isRun ? 'run' : ''} ${!x.doneAt && x.end < now && isRun ? 'over' : ''}`,
         isRun && x.i !== cur?.i ? `<button class="icon-btn tl-done" data-action="stepDone" data-id="${s.id}" data-i="${x.i}" aria-label="Erledigt">${icon('check')}</button>` : '');
     }).join('')}</ol>
-    <details class="card"><summary>Alle Zutaten <small class="muted">${s.calc.mode === 'flour' ? fmtG(s.calc.F) + ' Mehl' : `${fmtNum(s.calc.count, 0)} × ${fmtNum(s.calc.pieceWeight, 0)} g`} · ${fmtPct(s.calc.totals.hydration)}</small></summary>${ingredientBlocks(sessCalc(s), s.yeastType, true)}</details>
+    <details class="card"><summary>Alle Zutaten <small class="muted">${s.calc.kind === 'cake' ? `${esc(C.panLabel(s.calc.pan) || `${fmtNum(s.calc.factor, 2)}× Rezept`)} · ≈ ${fmtG(s.calc.total)}`
+      : `${s.calc.mode === 'flour' ? fmtG(s.calc.F) + ' Mehl' : `${fmtNum(s.calc.count, 0)} × ${fmtNum(s.calc.pieceWeight, 0)} g`} · ${fmtPct(s.calc.totals.hydration)}`}</small></summary>${ingredientBlocks(sessCalc(s), s.yeastType, true)}</details>
   </div>`;
   return { html };
 }
@@ -1333,8 +1537,16 @@ async function finishStep(s, i, hands) {
 const hasDone = (s) => s.steps.some((x) => x.doneAt);
 // Zutaten nur bei Schritten zeigen, in denen tatsächlich etwas vermengt wird
 const MIX_KINDS = new Set(['prep', 'autolyse', 'mix']);
+// Kuchen: Zutaten bei allen Schritten mit zugeordnetem Bestandteil (z. B. „Füllen“); Tourieren: Ziehfett beim ersten Tourieren
 function stepIngredients(s, st) {
-  if (!st || !MIX_KINDS.has(st.kind)) return null;
+  if (!st) return null;
+  if (s.calc?.kind === 'cake') return st.stage ? stageRows(s.calc, st.stage) : null;
+  if (st.kind === 'laminate') {
+    const first = s.steps.findIndex((x) => x.kind === 'laminate');
+    const stage = st.stage || (first === st.i ? 'lam' : null);
+    return stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
+  }
+  if (!MIX_KINDS.has(st.kind)) return null;
   const stage = st.stage || (st.kind === 'mix' ? 'main' : null);
   return stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
 }
@@ -1346,6 +1558,7 @@ function waterOverrides(s) {
   return o;
 }
 function sessCalc(s) {
+  if (s.calc?.kind === 'cake') return s.calc;
   const o = waterOverrides(s);
   if (!Object.keys(o).length) return s.calc;
   const c = structuredClone(s.calc);
@@ -1384,7 +1597,7 @@ function vHands(s) {
       <div class="progress big"><i data-prog="${cur.start},${cur.end}"></i></div>
       ${compNote(cur)}${rep}
       ${cur.notes ? `<div class="hands-notes">${esc(cur.notes)}</div>` : ''}
-      ${stg ? `<div class="hands-ing" data-tk="${s.id}:${cur.i}">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
+      ${stg ? `<div class="hands-ing" data-tk="${s.id}:${cur.i}">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${x.txt ?? fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
       <div class="grow"></div>
       ${next ? `<div class="hands-sub">Danach: <b>${esc(next.name)}</b> · ${fmtTime(Math.max(next.start, cur.end))}</div>` : ''}
       <button class="hands-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}" data-hands="1">✓ ${next ? 'Weiter' : 'Fertig'}</button>
@@ -1434,7 +1647,7 @@ function measLabel(m) {
 }
 function measBox(s, cur) {
   const m = s.steps[cur.i].meas || {};
-  const water = isMainMix(cur);
+  const water = s.calc?.kind !== 'cake' && isMainMix(cur);
   const def = water ? measDefaults(s) : {};
   const fields = water ? [...MEAS, ...MEAS_WATER] : MEAS;
   const shown = { ...def, ...(water ? waterOverrides(s) : {}), ...m };
@@ -1509,7 +1722,10 @@ function vLog(rid, lid, q) {
     <details class="card"><summary>Parameter <small class="muted">${paramChips(l.params, true)}</small></summary>
     <p class="muted small" style="margin-top:0">Aus ${l.sessionId ? 'dem Backvorgang' : 'dem Rezept'} übernommen – ändere, was du anders gemacht hast.</p>
     ${fld('Datum', `<input class="in" type="date" data-bind="l.date" value="${esc(l.date)}">`)}
-    <div class="grid2">
+    ${isCake(r) ? `<div class="grid2">
+      ${fld('Form / Menge', lb('params.pan', l.params.pan ?? '', 'placeholder="z. B. Ø 26 cm"'))}
+      ${fldU('Gesamtzeit', lb('params.totalHours', fmtIn(l.params.totalHours, 1), 'inputmode="decimal" data-num'), 'h')}
+    </div>` : `<div class="grid2">
       ${fldU('Hydration', lb('params.hydration', fmtIn(l.params.hydration), 'inputmode="decimal" data-num'), '%')}
       ${fldU('Salz', lb('params.salt', fmtIn(l.params.salt), 'inputmode="decimal" data-num'), '%')}
       ${fldU('Hefe gesamt', lb('params.yeastPct', fmtIn(l.params.yeastPct, 3), 'inputmode="decimal" data-num'), '%')}
@@ -1518,17 +1734,17 @@ function vLog(rid, lid, q) {
       ${fldU('Gewicht', lb('params.pieceWeight', fmtIn(l.params.pieceWeight, 0), 'inputmode="decimal" data-num'), 'g')}
       ${fldU('Gesamtzeit', lb('params.totalHours', fmtIn(l.params.totalHours, 1), 'inputmode="decimal" data-num'), 'h')}
       ${fld('Mehl', lb('params.flour', l.params.flour))}
-    </div>
+    </div>`}
     </details>
     <details class="card"><summary>Temperaturen &amp; Ofen <small class="muted">${[l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.waterTemp && `Wasser ${esc(l.waterTemp)} °C`, l.iceG && `Eis ${esc(l.iceG)} g`, l.oven && esc(l.oven)].filter(Boolean).join(' · ') || 'optional'}</small></summary>
     ${l.sessionId && (l.doughTemp || l.roomTemp || l.fridgeTemp || l.waterTemp || l.iceG) ? '<p class="muted small" style="margin-top:0">🌡️ Aus den Messwerten des Backvorgangs.</p>' : ''}
     <div class="grid2">
-      ${fldU('Teig nach Kneten', lb('doughTemp', l.doughTemp, 'inputmode="decimal"'), '°C')}
+      ${isCake(r) ? '' : fldU('Teig nach Kneten', lb('doughTemp', l.doughTemp, 'inputmode="decimal"'), '°C')}
       ${fldU('Raum', lb('roomTemp', l.roomTemp, 'inputmode="decimal"'), '°C')}
       ${fldU('Kühlschrank', lb('fridgeTemp', l.fridgeTemp, 'inputmode="decimal"'), '°C')}
-      ${fldU('Wassertemperatur', lb('waterTemp', l.waterTemp ?? '', 'inputmode="decimal"'), '°C')}
-      ${fldU('davon Eis', lb('iceG', l.iceG ?? '', 'inputmode="decimal"'), 'g')}
-      ${fld('Ofen', lb('oven', l.oven, `placeholder="${r.category === 'bread' ? 'z. B. Backofen + Gusstopf' : 'z. B. Ooni Koda 16'}"`))}
+      ${isCake(r) ? '' : `${fldU('Wassertemperatur', lb('waterTemp', l.waterTemp ?? '', 'inputmode="decimal"'), '°C')}
+      ${fldU('davon Eis', lb('iceG', l.iceG ?? '', 'inputmode="decimal"'), 'g')}`}
+      ${fld('Ofen', lb('oven', l.oven, `placeholder="${r.category === 'pizza' ? 'z. B. Ooni Koda 16' : r.category === 'bread' ? 'z. B. Backofen + Gusstopf' : 'z. B. Umluft, mittlere Schiene'}"`))}
       ${fldU('Backtemperatur', lb('bakeTemp', l.bakeTemp, 'inputmode="decimal"'), '°C')}
       ${fld('Backzeit', lb('bakeTime', l.bakeTime, 'placeholder="z. B. 90 s / 45 min"'))}
     </div>
@@ -1542,11 +1758,16 @@ function vLog(rid, lid, q) {
 }
 
 function paramsFrom(r, sess) {
-  const c = sess?.calc || calc(r);
+  const c = sess?.calc || calcFor(r);
   const steps = sess?.steps || r.steps;
   const lastDone = sess ? Math.max(0, ...steps.map((x) => x.doneAt || 0)) : 0;
   const total = sess ? ((lastDone || Date.now()) - sess.startAt) / 60000 : planInfo(steps, 0).total;
+  if (c.kind === 'cake') {
+    return { hydration: 0, salt: 0, yeastPct: 0, pf: '', count: 0, pieceWeight: 0, totalHours: Math.round((total / 60) * 10) / 10, flour: '',
+      pan: C.panLabel(c.pan) || (Math.abs(c.factor - 1) > 0.005 ? `${fmtNum(c.factor, 2)}× Rezept` : '') };
+  }
   return {
+    pan: '',
     hydration: c.totals.hydration,
     salt: c.totals.flour ? (c.totals.salt / c.totals.flour) * 100 : r.salt,
     yeastPct: c.totals.flour ? Math.round((c.totals.yeast / c.totals.flour) * 100000) / 1000 : 0,
@@ -1584,6 +1805,7 @@ function vSettings() {
       ${toggle('handsFree', '🙌 Teighände-Modus', 'Große Ansicht zum Bedienen mit Teig an den Fingern.')}
       ${feat('handsFree') ? `<div class="sub-opt">${toggle('voice', '🔊 Sprachansagen', 'Sagt im Teighände-Modus den nächsten Schritt an.')}${toggle('wakeLock', '💡 Bildschirm anlassen', 'Verhindert im Teighände-Modus das Abschalten des Displays.')}</div>` : ''}
       ${toggle('confirmEarly', '⏳ Vorzeitiges Weiter bestätigen', 'Fragt nach, wenn ein Schritt noch läuft und du schon weiter tippst.')}
+      ${toggle('pastry', '🥐 Feingebäck & Kuchen', 'Vorlagen und Kategorien für Croissant, Plunder, Hefeteig, Kuchen und Torten. Vorhandene Rezepte bleiben immer sichtbar.')}
       ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
       ${toggle('nightOpt', '🪄 Nachtruhe-Optimierer', 'Schlägt angepasste Kühlschrankzeiten vor.')}
       <div class="set-row"><span><b>🌙 Nachtruhe</b><br><small class="muted">Planer warnt in dieser Zeit</small></span>
@@ -1736,12 +1958,18 @@ function importFile() {
 }
 
 function recipeText(r) {
-  const c = calc(r);
-  const lines = [`${catOf(r.category).icon} ${r.name}`, r.description || '', '',
-    `Menge: ${r.yield.mode === 'flour' ? fmtG(c.F) + ' Mehl' : `${fmtNum(c.count, 0)} × ${fmtNum(c.pieceWeight, 0)} g`} · Hydration ${fmtPct(c.totals.hydration)}`, ''];
-  c.pfs.forEach((x) => { lines.push(`— ${x.pf.name} —`); pfRows(x, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`)); lines.push(''); });
-  lines.push('— Hauptteig —');
-  mainRows(c, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`));
+  const c = calcFor(r);
+  const lines = [`${catOf(r.category).icon} ${r.name}`, r.description || '', ''];
+  if (c.kind === 'cake') {
+    if (C.panLabel(r.pan)) lines.push(`Form: ${C.panLabel(r.pan)}`, '');
+    c.parts.forEach((p) => { lines.push(`— ${p.name || 'Zutaten'} —`); cakeRows(p).forEach((row) => lines.push(`${row.name}: ${row.txt}`)); lines.push(''); });
+  } else {
+    lines.push(`Menge: ${r.yield.mode === 'flour' ? fmtG(c.F) + ' Mehl' : `${fmtNum(c.count, 0)} × ${fmtNum(c.pieceWeight, 0)} g`} · Hydration ${fmtPct(c.totals.hydration)}`, '');
+    c.pfs.forEach((x) => { lines.push(`— ${x.pf.name} —`); pfRows(x, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`)); lines.push(''); });
+    lines.push(c.lam.g > 0 ? '— Grundteig —' : '— Hauptteig —');
+    mainRows(c, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`));
+    if (c.lam.g > 0) lines.push('', '— Ziehfett —', `${c.lam.name}: ${fmtG(c.lam.g)}`);
+  }
   if (r.steps?.length) {
     lines.push('', '— Ablauf —');
     planInfo(r.steps, 0).tl.forEach((s, i) => lines.push(`${i + 1}. ${s.name} – ${fmtDur(s.durationMin)} (${locOf(s.location).short})${s.notes ? ': ' + s.notes : ''}`));
@@ -1828,15 +2056,16 @@ function vImport(data) {
   if (p.loading) body = '<p class="muted center">Rezept wird gelesen …</p>';
   else if (p.error) body = `<div class="empty"><div class="empty-ic">😕</div><h2>Code nicht lesbar</h2><p>${esc(p.error)}</p><a class="btn" href="#/">Zur Übersicht</a></div>`;
   else {
-    const r = p.r, c = calc(r), info = planInfo(r.steps, 0);
+    const r = p.r, c = calcFor(r), info = planInfo(r.steps, 0);
     body = `<section class="card">
       <div class="eyebrow">${catOf(r.category).icon} ${catOf(r.category).label}</div>
       <h2 class="title sm">${esc(r.name)}</h2>
       ${r.description ? `<p class="muted">${esc(r.description)}</p>` : ''}
       <div class="pchips">
+        ${c.kind === 'cake' ? `${C.panLabel(r.pan) ? `<span class="pchip">⭕ ${esc(C.panLabel(r.pan))}</span>` : ''}<span class="pchip">⚖️ ≈ ${fmtG(c.total)}</span>` : `
         <span class="pchip">💧 ${fmtPct(c.totals.hydration)}</span>
         <span class="pchip">🧱 ${pfLabel(r.preferments)}</span>
-        <span class="pchip">⚖️ ${r.yield.mode === 'flour' ? fmtG(c.F) + ' Mehl' : `${fmtNum(c.count, 0)} × ${fmtNum(c.pieceWeight, 0)} g`}</span>
+        <span class="pchip">⚖️ ${r.yield.mode === 'flour' ? fmtG(c.F) + ' Mehl' : `${fmtNum(c.count, 0)} × ${fmtNum(c.pieceWeight, 0)} g`}</span>`}
         ${r.steps.length ? `<span class="pchip">⏱ ${fmtDur(info.total)}</span>` : ''}
       </div>
     </section>
@@ -2052,7 +2281,46 @@ const A = {
     render();
   },
   scaleReset: () => { S.scale = null; S.plan = null; render(); },
-  scaleSave: async () => { const r = S.scale && byId(S.scale.id); if (!r) return render(); r.yield = { ...S.scale.yield }; await saveRecipe(r); S.plan = null; toast('✓ Menge gespeichert'); render(); },
+  scaleSave: async () => {
+    const r = S.scale && byId(S.scale.id);
+    if (!r) return render();
+    if (isCake(r)) {
+      // Kuchen dauerhaft auf eine andere Form umrechnen: alle Mengen × Faktor, neue Form als Rezept-Form
+      const c = C.calcCake(r, cakeOv(S.scale));
+      if (!C.panValid(c.pan) || !confirm(`Rezept dauerhaft auf ${C.panLabel(c.pan)} umrechnen?\n\nAlle Mengen werden mit ${fmtNum(c.factor, 2)} multipliziert.`)) return;
+      const rnd = (v, unit) => (unit === 'g' || unit === 'ml' ? (v < 20 ? Math.round(v * 10) / 10 : Math.round(v)) : Math.round(v * 100) / 100);
+      r.parts.forEach((p) => p.items.forEach((it) => { if (num(it.amount) > 0) it.amount = rnd(num(it.amount) * c.factor, it.unit); }));
+      r.pan = { ...r.pan, shape: c.pan.shape, d: num(c.pan.d), l: num(c.pan.l), w: num(c.pan.w), n: num(c.pan.n) };
+      await saveRecipe(r); S.scale = null; S.plan = null; toast(`✓ Rezept auf ${C.panLabel(r.pan)} umgerechnet`); render();
+      return;
+    }
+    r.yield = { ...S.scale.yield }; await saveRecipe(r); S.plan = null; toast('✓ Menge gespeichert'); render();
+  },
+  // Kuchen: Umrechnen nach Backform oder Faktor (t = 'scale' für die Rezeptseite, 'plan' für den Planer)
+  cMode: (el) => {
+    const t = el.dataset.t, st = cakeState(t), r = byId(t === 'plan' ? S.plan?.id : S.scale?.id);
+    if (!st || !r) return render();
+    st.cmode = el.dataset.v;
+    if (st.cmode === 'pan' && !C.panValid(st.pan)) st.pan = { ...r.pan };
+    if (t === 'scale') S.plan = null;
+    render();
+  },
+  cShape: (el) => {
+    const t = el.dataset.t, st = cakeState(t), r = byId(t === 'plan' ? S.plan?.id : S.scale?.id);
+    if (!st || !r) return render();
+    const v = el.dataset.v;
+    st.pan = r.pan.shape === v ? { ...r.pan } : v === 'round' ? { shape: 'round', d: 26, l: 0, w: 0, n: 0 } : { shape: 'rect', d: 0, l: 30, w: 20, n: 0 };
+    if (t === 'scale') S.plan = null;
+    render();
+  },
+  cPreset: (el) => {
+    const t = el.dataset.t, st = cakeState(t);
+    if (!st) return render();
+    if (el.dataset.f) { st.cmode = 'factor'; st.factor = +el.dataset.f; }
+    else { st.cmode = 'pan'; st.pan = { shape: el.dataset.shape, d: +el.dataset.d || 0, l: +el.dataset.l || 0, w: +el.dataset.w || 0, n: 0 }; }
+    if (t === 'scale') S.plan = null;
+    render();
+  },
 
   editAt: (el) => { const id = el.dataset.id || route().parts[1]; discardDraft(); S.wizStart = +el.dataset.step; location.hash = `#/edit/${id}`; },
   kiCopy: async () => {
@@ -2098,7 +2366,7 @@ const A = {
   },
   editSave: async () => {
     const d = S.draft;
-    d.name = (d.name || '').trim() || (d.category === 'bread' ? 'Neues Brot' : 'Neue Pizza');
+    d.name = (d.name || '').trim() || ({ bread: 'Neues Brot', fine: 'Neues Feingebäck', cake: 'Neuer Kuchen', other: 'Neues Rezept' }[d.category] || 'Neue Pizza');
     d.tags = (d._tags ?? '').split(',').map((t) => t.trim()).filter(Boolean);
     const removed = (S.draftOrig?.photos || []).filter((p) => !(d.photos || []).includes(p));
     delete d._new; delete d._tags;
@@ -2108,7 +2376,49 @@ const A = {
     toast('✓ Rezept gespeichert');
     location.hash = `#/r/${d.id}`;
   },
-  setCat: (el) => { S.draft.category = el.dataset.v; render(); },
+  setCat: (el) => {
+    const d = S.draft, to = el.dataset.v;
+    if (to === d.category) return;
+    if (to === 'cake' && !isCake(d)) {
+      // Wechsel zu Kuchen: Mengen einmalig als Zutatenliste übernehmen (Bäckerprozente bleiben unverändert erhalten)
+      if (!(d.parts || []).some((p) => p.items?.length)) {
+        const c = calc(d), it = [];
+        const add = (name, g, unit = 'g') => { if (g > 0.05) it.push({ name, amount: g < 20 ? Math.round(g * 10) / 10 : Math.round(g), unit }); };
+        c.totals.flours.forEach((f) => add(f.name, f.g));
+        add('Wasser', c.totals.water, 'ml'); add('Salz', c.totals.salt); add(yeastName(d.yeastType), c.totals.yeast); add('Öl', c.totals.oil);
+        c.main.extras.forEach((e) => add(e.name || 'Zutat', e.g)); add(c.lam.name, c.lam.g);
+        d.parts = [{ id: uid(), name: 'Teig', items: it }];
+      }
+      if (!C.panValid(d.pan)) d.pan = { shape: 'round', d: 26, l: 0, w: 0, n: 0 };
+      // Schritte zeigen jetzt die Zutaten des Kuchen-Teils statt „Hauptteig“
+      d.steps.forEach((s) => { if (s.stage === 'main') s.stage = d.parts[0].id; else if (s.stage && !d.parts.some((p) => p.id === s.stage)) s.stage = null; });
+    } else if (isCake(d) && to !== 'cake') {
+      if (!(d.flours || []).length) Object.assign(d, { flours: [{ name: 'Weizenmehl 550', pct: 100 }], yield: { mode: 'pieces', count: 1, pieceWeight: 500, flour: 300, loss: 0 }, water: { pct: 60, temp: '', icePct: '' }, salt: 2 });
+      d.steps.forEach((s) => { if (s.stage && d.parts.some((p) => p.id === s.stage)) s.stage = null; });
+      if (d.parts.some((p) => p.items?.length)) toast('Die Kuchen-Zutatenliste bleibt gespeichert, wird bei dieser Art aber nicht verwendet.', 4500);
+    }
+    d.category = to;
+    render();
+  },
+  setPanShape: (el) => {
+    const p = S.draft.pan ||= {}, v = el.dataset.v;
+    p.shape = v;
+    if (v === 'round' && !(num(p.d) > 0)) p.d = 26;
+    if (v === 'rect' && !(num(p.l) > 0 && num(p.w) > 0)) Object.assign(p, { l: 30, w: 20 });
+    if (v === 'count' && !(num(p.n) > 0)) p.n = 12;
+    render();
+  },
+  setPan: (el) => { Object.assign(S.draft.pan, { shape: el.dataset.shape, d: +el.dataset.d || S.draft.pan.d || 0, l: +el.dataset.l || 0, w: +el.dataset.w || 0 }); render(); },
+  addPart: (el) => { S.draft.parts.push({ id: uid(), name: el.dataset.v, items: [] }); render(); },
+  delPart: (el) => {
+    const d = S.draft, p = d.parts[+el.dataset.i];
+    if (p.items?.length && !confirm(`„${p.name || 'Bestandteil'}“ mit ${p.items.length} Zutaten entfernen?`)) return;
+    d.parts.splice(+el.dataset.i, 1);
+    d.steps.forEach((s) => { if (s.stage === p.id) s.stage = null; });
+    render();
+  },
+  addItem: (el) => { S.draft.parts[+el.dataset.p].items.push({ name: el.dataset.v, amount: 0, unit: el.dataset.u || 'g' }); render(); },
+  delItem: (el) => { S.draft.parts[+el.dataset.p].items.splice(+el.dataset.i, 1); render(); },
   setYieldMode: (el) => {
     const d = S.draft, c = calc(d);
     d.yield.mode = el.dataset.v;
@@ -2180,11 +2490,11 @@ const A = {
   },
   addStep: (el) => {
     const k = el.dataset.v, d = S.draft;
-    const defaults = { prep: [15, 'rt'], autolyse: [45, 'rt'], mix: [15, 'rt'], bulk: [120, 'rt'], fold: [120, 'rt'], shape: [15, 'rt'], proof: [720, 'fridge'], temper: [180, 'rt'], preheat: [45, 'oven'], bake: [30, 'oven'], other: [30, 'rt'] };
+    const defaults = { prep: [15, 'rt'], autolyse: [45, 'rt'], mix: [15, 'rt'], bulk: [120, 'rt'], fold: [120, 'rt'], shape: [15, 'rt'], laminate: [10, 'rt'], proof: [720, 'fridge'], temper: [180, 'rt'], preheat: [isCake(d) ? 15 : 45, 'oven'], bake: [30, 'oven'], cool: [60, 'rt'], assemble: [20, 'rt'], rest: [30, isCake(d) ? 'fridge' : 'rt'], other: [30, 'rt'] };
     const [dur, loc] = defaults[k] || [30, 'rt'];
     const s = C.step(k, STEP_KINDS[k].label, dur, loc, k === 'fold' ? { repeat: { count: 4, intervalMin: 30 } } : {});
     const bakeIdx = d.steps.findIndex((x) => x.kind === 'bake');
-    if (k !== 'bake' && k !== 'cool' && bakeIdx >= 0) d.steps.splice(bakeIdx, 0, s); else d.steps.push(s);
+    if (k !== 'bake' && k !== 'cool' && k !== 'assemble' && bakeIdx >= 0) d.steps.splice(bakeIdx, 0, s); else d.steps.push(s);
     S.openStep = s.id;
     render();
   },
@@ -2248,7 +2558,7 @@ const A = {
     const ov = planOv(r);
     const s = {
       id: uid(), recipeId: r.id, recipeName: r.name, category: r.category, createdAt: Date.now(), startAt, status: 'active',
-      ov, calc: calc(r, ov), yeastType: r.yeastType, steps: structuredClone(planStepsBase(r)).map((x) => ({ ...x, doneAt: null })), notified: [], logId: null,
+      ov, calc: calcFor(r, ov), yeastType: r.yeastType, steps: structuredClone(planStepsBase(r)).map((x) => ({ ...x, doneAt: null })), notified: [], logId: null,
       room: S.plan.ov.room ?? '',
     };
     await saveSession(s);
@@ -2374,6 +2684,7 @@ const A = {
   bakeAgain: (el) => {
     const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l.recipeId), pr = l.params || {};
     S.plan = initPlan(r);
+    if (isCake(r)) { location.hash = `#/plan/${r.id}`; return; }
     Object.assign(S.plan.ov, { hydration: num(pr.hydration) > 0 ? num(pr.hydration) : r.water.pct });
     if (r.yield.mode !== 'flour' && num(pr.count) > 0 && num(pr.pieceWeight) > 0) Object.assign(S.plan.ov, { ymode: 'pieces', count: Math.max(1, Math.round(num(pr.count))), pieceWeight: num(pr.pieceWeight) });
     S.plan.adjOpen = true;
@@ -2604,6 +2915,17 @@ const CHANGES = {
     if (sum) sum.innerHTML = measLabel(st.meas) || 'Temperatur notieren';
     S.measOpen = `${s.id}:${el.dataset.i}`;
     S.measDirty = true; // neu zeichnen, sobald der Fokus das Feld verlässt (Zeitplan kann sich ändern)
+  },
+  // Kuchen: Zielform / Faktor (Rezeptseite oder Planer)
+  cake: (el) => {
+    const t = el.dataset.t, k = el.dataset.k, st = cakeState(t);
+    if (!st) return render();
+    const v = num(el.value);
+    if (!(v > 0)) { toast('Bitte eine Zahl größer 0 eingeben'); render(); return; }
+    if (k === 'factor') st.factor = v;
+    else st.pan = { ...st.pan, [k]: k === 'n' ? Math.round(v) : v };
+    if (t === 'scale') S.plan = null;
+    render();
   },
   planOv: (el) => {
     const k = el.dataset.k;

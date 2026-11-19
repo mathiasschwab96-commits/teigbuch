@@ -36,13 +36,69 @@ export const STEP_KINDS = {
   rest: { label: 'Ruhen / Reifen', icon: '💤' },
   fold: { label: 'Dehnen & Falten', icon: '🙌' },
   shape: { label: 'Formen / Ballen', icon: '🫓' },
+  laminate: { label: 'Tourieren', icon: '🧈' },
   proof: { label: 'Stückgare', icon: '🎈' },
   temper: { label: 'Akklimatisieren', icon: '🌡️' },
   preheat: { label: 'Ofen vorheizen', icon: '♨️' },
   bake: { label: 'Backen', icon: '🔥' },
   cool: { label: 'Auskühlen', icon: '🧊' },
+  assemble: { label: 'Füllen / Fertigstellen', icon: '🎂' },
   other: { label: 'Sonstiges', icon: '📝' },
 };
+
+// Rezept-Kategorien. „cake“ nutzt ein eigenes Modell: Zutatenliste in Bestandteilen + Backform (statt Bäckerprozenten).
+export const CATEGORIES = ['pizza', 'bread', 'fine', 'cake', 'other'];
+export const isCake = (r) => r?.category === 'cake';
+
+// ---------- Kuchen & Torten: Einheiten und Backformen ----------
+export const UNITS = ['g', 'ml', 'Stk', 'EL', 'TL', 'Pck', 'Prise'];
+export const PAN_SHAPES = { round: 'Rund', rect: 'Eckig', count: 'Stück' };
+export function panArea(p) {
+  if (!p) return 0;
+  if (p.shape === 'round') return Math.PI * (num(p.d) / 2) ** 2;
+  if (p.shape === 'rect') return num(p.l) * num(p.w);
+  return 0;
+}
+export const panValid = (p) => (p?.shape === 'count' ? num(p.n) > 0 : panArea(p) > 0);
+// Umrechnungsfaktor von der Rezept-Form auf eine andere Form (gleiche Höhe → nach Fläche; Stück → nach Anzahl)
+export function panFactor(base, target) {
+  if (!panValid(base) || !panValid(target)) return 1;
+  if (base.shape === 'count' || target.shape === 'count') return base.shape === target.shape ? num(target.n) / num(base.n) : 1;
+  return panArea(target) / panArea(base);
+}
+export function panLabel(p) {
+  if (!panValid(p)) return '';
+  if (p.shape === 'round') return `Ø ${fmtNum(p.d)} cm`;
+  if (p.shape === 'rect') return `${fmtNum(p.l)} × ${fmtNum(p.w)} cm`;
+  return `${fmtNum(p.n, 0)} Stück`;
+}
+// Ungefähres Gewicht je Stück (für „1½ Eier ≈ 80 g“)
+const PIECE_G = [[/eigelb/i, 18], [/eiwei(ß|ss)|eiklar/i, 33], [/\bei(er)?\b|vollei/i, 52]];
+export const pieceGrams = (name) => PIECE_G.find(([re]) => re.test(name || ''))?.[1] || 0;
+
+// Kuchen-Rezept berechnen: ov.factor (direkt) oder ov.pan (Zielform) – sonst Rezept-Form
+export function calcCake(r, ov = {}) {
+  const base = r.pan || {};
+  let factor = 1, pan = base;
+  if (num(ov.factor) > 0) { factor = num(ov.factor); pan = null; }
+  else if (ov.pan && panValid(ov.pan)) { pan = ov.pan; factor = panFactor(base, ov.pan); }
+  const warnings = [];
+  if (ov.pan && panValid(ov.pan) && panValid(base) && (base.shape === 'count') !== (ov.pan.shape === 'count')) warnings.push('Stückzahl und Backform lassen sich nicht ineinander umrechnen – es gilt die Rezeptmenge.');
+  const parts = (r.parts || []).map((p) => {
+    const items = (p.items || []).map((it) => {
+      const v = num(it.amount) * factor;
+      return { name: it.name, unit: it.unit || 'g', amount: num(it.amount), v, g: it.unit === 'g' || !it.unit ? v : it.unit === 'ml' ? v : it.unit === 'Stk' && pieceGrams(it.name) ? v * pieceGrams(it.name) : null };
+    });
+    return { id: p.id, name: p.name, items, g: items.reduce((s, x) => s + (x.g || 0), 0) };
+  });
+  const total = parts.reduce((s, p) => s + p.g, 0);
+  return { kind: 'cake', factor, pan, parts, total, warnings };
+}
+
+// Wasseranteil typischer flüssiger Zutaten (für die „wirksame Hydration“ bei Feingebäck)
+const LIQUID = [[/buttermilch/i, 90], [/milch|milk/i, 87], [/eigelb/i, 50], [/eiwei(ß|ss)|eiklar/i, 88], [/\bei(er)?\b|vollei/i, 75],
+  [/sahne|rahm/i, 60], [/butter/i, 16], [/joghurt/i, 85], [/quark|topfen/i, 80], [/honig/i, 17], [/saft|bier|wein/i, 90]];
+export const liquidShare = (name) => (LIQUID.find(([re]) => re.test(name || ''))?.[1] || 0) / 100;
 
 export const LOCATIONS = {
   rt: { label: 'Raumtemperatur', short: 'RT', icon: '🏠' },
@@ -109,8 +165,10 @@ export function calc(r, ov = {}) {
     yeast: p(r.yeastPct),
     pfYeast: sum(pfs, (pf) => p(pf.flourPct) * p(pf.yeastPct)),
     extras: sum(r.extras || [], (e) => p(e.pct)),
+    // Ab Schema 4: Ziehfett zum Tourieren (Croissant, Plunder) in % vom Mehl – gehört zum Teiggewicht
+    lam: Math.max(0, p(r.lamination?.pct)),
   };
-  const S = 1 + fr.water + fr.oil + fr.salt + fr.yeast + fr.pfYeast + fr.extras;
+  const S = 1 + fr.water + fr.oil + fr.salt + fr.yeast + fr.pfYeast + fr.extras + fr.lam;
   const loss = 1 + p(y.loss);
   let F, D, count = num(y.count);
   const pw = num(y.pieceWeight);
@@ -151,13 +209,18 @@ export function calc(r, ov = {}) {
   const waterTemp = optNum(r.water?.temp);
   const icePct = Math.min(100, Math.max(0, num(r.water?.icePct)));
   const ice = Math.max(0, mainWater) * icePct / 100;
+  const lamG = F * fr.lam;
+  // Wirksame Flüssigkeit: Wasser + Wasseranteil von Milch, Ei, Butter … (nur Anzeige, ändert nichts an den Mengen)
+  const liquid = totalWater + sum(extras, (e) => e.g * liquidShare(e.name));
 
   return {
     F, D, count, pieceWeight: pw, mode: y.mode, warnings,
     pfs: pfRes,
     main: { flours: flours.map((f) => ({ name: f.name, g: f.g })), water: mainWater, oil, salt, yeast: yeastMain, extras, waterTemp, ice, icePct },
+    lam: { g: lamG, pct: fr.lam * 100, name: (r.lamination?.name || '').trim() || 'Butter', base: D - lamG },
     totals: {
-      flour: F, water: totalWater, oil, salt, dough: D,
+      flour: F, water: totalWater, oil, salt, dough: D, lam: lamG,
+      liquid, hydEff: F > 0 ? (liquid / F) * 100 : 0,
       yeast: yeastMain + sum(pfRes, (x) => x.yeast),
       starter: sum(pfRes, (x) => x.starter),
       extras: sum(extras, (e) => e.g),
@@ -273,7 +336,7 @@ function keepUnknown(src, known) {
   }
   return out;
 }
-const R_KEYS = ['v', 'id', 'name', 'category', 'description', 'source', 'tags', 'favorite', 'photos', 'cover', 'yield', 'flours', 'water', 'oil', 'salt', 'yeastType', 'yeastPct', 'extras', 'preferments', 'steps', 'ddt', 'notes', 'createdAt', 'updatedAt'];
+const R_KEYS = ['v', 'id', 'name', 'category', 'description', 'source', 'tags', 'favorite', 'photos', 'cover', 'yield', 'flours', 'water', 'oil', 'salt', 'yeastType', 'yeastPct', 'extras', 'preferments', 'steps', 'ddt', 'notes', 'createdAt', 'updatedAt', 'lamination', 'pan', 'parts'];
 const PF_KEYS = ['id', 'type', 'name', 'flourPct', 'hydration', 'yeastPct', 'starterPct', 'starterHydration', 'flourName'];
 const ST_KEYS = ['id', 'kind', 'name', 'durationMin', 'location', 'temp', 'notes', 'parallel', 'stage', 'repeat'];
 const L_KEYS = ['v', 'id', 'recipeId', 'date', 'rating', 'sub', 'params', 'roomTemp', 'doughTemp', 'fridgeTemp', 'waterTemp', 'iceG', 'oven', 'bakeTemp', 'bakeTime', 'notes', 'nextTime', 'photos', 'sessionId', 'createdAt', 'updatedAt'];
@@ -286,11 +349,20 @@ export function sanitizeRecipe(r) {
     return { ...keepUnknown(pf, PF_KEYS), id, type: pick(pf.type, PF_TYPES, 'custom'), name: str(pf.name, 80), flourPct: num(pf.flourPct), hydration: num(pf.hydration),
       yeastPct: num(pf.yeastPct), starterPct: num(pf.starterPct), starterHydration: num(pf.starterHydration ?? 100), flourName: str(pf.flourName, 80) };
   });
+  // Kuchen & Torten (ab Schema 4): Bestandteile (Teig, Füllung, Creme …) mit Zutaten in beliebigen Einheiten
+  const partIds = new Map();
+  const parts = (Array.isArray(r.parts) ? r.parts : []).slice(0, 30).map((pt) => {
+    const id = safeId(pt?.id) || uid();
+    partIds.set(pt?.id, id);
+    return { ...keepUnknown(pt, ['id', 'name', 'items']), id, name: str(pt?.name, 80),
+      items: (Array.isArray(pt?.items) ? pt.items : []).slice(0, 100).map((it) => ({ ...keepUnknown(it, ['name', 'amount', 'unit']),
+        name: str(it?.name, 80), amount: Math.max(0, num(it?.amount)), unit: UNITS.includes(it?.unit) ? it.unit : 'g' })) };
+  });
   const steps = (Array.isArray(r.steps) ? r.steps : []).map((s) => ({
     ...keepUnknown(s, ST_KEYS),
     id: safeId(s.id) || uid(), kind: pick(s.kind, STEP_KINDS, 'other'), name: str(s.name, 120), durationMin: Math.max(0, num(s.durationMin)),
     location: pick(s.location, LOCATIONS, 'rt'), temp: str(s.temp, 40), notes: str(s.notes, 2000), parallel: !!s.parallel,
-    stage: s.stage === 'main' ? 'main' : pfIds.get(s.stage) || null,
+    stage: s.stage === 'main' || s.stage === 'lam' ? s.stage : pfIds.get(s.stage) || partIds.get(s.stage) || null,
     repeat: s.repeat && num(s.repeat.count) > 0 ? { count: Math.round(num(s.repeat.count)), intervalMin: Math.max(1, num(s.repeat.intervalMin)) } : null,
   }));
   const y = r.yield || {};
@@ -299,7 +371,7 @@ export function sanitizeRecipe(r) {
     ...keepUnknown(r, R_KEYS),
     v: Math.max(1, Math.floor(num(r.v)) || 1),
     // Unbekannte/fehlende Angaben NICHT raten – leer lassen, die App fragt nach (migrate.js → CHECKS)
-    id: safeId(r.id) || uid(), name: str(r.name, 120), category: ['pizza', 'bread', 'other'].includes(r.category) ? r.category : '',
+    id: safeId(r.id) || uid(), name: str(r.name, 120), category: CATEGORIES.includes(r.category) ? r.category : '',
     description: str(r.description, 500), source: str(r.source, 300), tags: (Array.isArray(r.tags) ? r.tags : []).map((t) => str(t, 40)).slice(0, 20), favorite: !!r.favorite,
     photos, cover: photos.includes(safeId(r.cover)) ? safeId(r.cover) : null,
     yield: { ...keepUnknown(y, ['mode', 'count', 'pieceWeight', 'flour', 'loss']), mode: y.mode === 'flour' ? 'flour' : 'pieces', count: num(y.count) || 1, pieceWeight: num(y.pieceWeight), flour: num(y.flour), loss: num(y.loss) },
@@ -309,6 +381,11 @@ export function sanitizeRecipe(r) {
     yeastType: r.yeastType === 'dry' || r.yeastType === 'fresh' ? r.yeastType : '', yeastPct: num(r.yeastPct),
     extras: (Array.isArray(r.extras) ? r.extras : []).map((e) => ({ name: str(e.name, 80), pct: num(e.pct) })),
     preferments, steps, ddt: num(r.ddt ?? 24), notes: str(r.notes, 8000),
+    lamination: { ...keepUnknown(r.lamination, ['pct', 'name']), pct: Math.max(0, num(r.lamination?.pct)), name: str(r.lamination?.name, 80) },
+    // Form: '' = keine Angabe (dann nur Umrechnen per Faktor) – wird nicht geraten
+    pan: { ...keepUnknown(r.pan, ['shape', 'd', 'l', 'w', 'n']), shape: Object.prototype.hasOwnProperty.call(PAN_SHAPES, r.pan?.shape) ? r.pan.shape : '',
+      d: Math.max(0, num(r.pan?.d)), l: Math.max(0, num(r.pan?.l)), w: Math.max(0, num(r.pan?.w)), n: Math.max(0, Math.round(num(r.pan?.n))) },
+    parts,
     createdAt: num(r.createdAt) || Date.now(), updatedAt: num(r.updatedAt) || Date.now(),
   };
 }
@@ -322,8 +399,8 @@ export function sanitizeLog(l) {
     v: Math.max(1, Math.floor(num(l.v)) || 1),
     id: safeId(l.id) || uid(), recipeId: safeId(l.recipeId), date: /^\d{4}-\d{2}-\d{2}$/.test(l.date) ? l.date : '',
     rating: Math.max(0, Math.min(5, Math.round(num(l.rating)))), sub,
-    params: { ...keepUnknown(p, ['hydration', 'salt', 'yeastPct', 'pf', 'count', 'pieceWeight', 'totalHours', 'flour']), hydration: num(p.hydration), salt: num(p.salt), yeastPct: num(p.yeastPct), pf: str(p.pf, 120), count: num(p.count),
-      pieceWeight: num(p.pieceWeight), totalHours: num(p.totalHours), flour: str(p.flour, 200) },
+    params: { ...keepUnknown(p, ['hydration', 'salt', 'yeastPct', 'pf', 'count', 'pieceWeight', 'totalHours', 'flour', 'pan']), hydration: num(p.hydration), salt: num(p.salt), yeastPct: num(p.yeastPct), pf: str(p.pf, 120), count: num(p.count),
+      pieceWeight: num(p.pieceWeight), totalHours: num(p.totalHours), flour: str(p.flour, 200), pan: str(p.pan, 80) },
     roomTemp: str(l.roomTemp, 10), doughTemp: str(l.doughTemp, 10), fridgeTemp: str(l.fridgeTemp, 10), waterTemp: str(l.waterTemp, 10), iceG: str(l.iceG, 10), oven: str(l.oven, 80),
     bakeTemp: str(l.bakeTemp, 10), bakeTime: str(l.bakeTime, 40), notes: str(l.notes, 4000), nextTime: str(l.nextTime, 1000),
     photos: (Array.isArray(l.photos) ? l.photos : []).map(safeId).filter(Boolean), sessionId: safeId(l.sessionId) || null,
@@ -343,17 +420,25 @@ export function makePf(type, extra = {}) {
 }
 
 export function blankRecipe(category = 'pizza') {
-  const bread = category === 'bread';
-  return {
+  const bread = category === 'bread', fine = category === 'fine', cake = category === 'cake';
+  const r = {
     id: uid(), name: '', category, description: '', tags: [], favorite: false, photos: [], cover: null,
-    yield: bread ? { mode: 'pieces', count: 1, pieceWeight: 900, flour: 500, loss: 0 } : { mode: 'pieces', count: 6, pieceWeight: 260, flour: 1000, loss: 0 },
-    flours: [{ name: bread ? 'Weizenmehl 550' : 'Tipo 00', pct: 100 }],
-    water: { pct: bread ? 72 : 65, temp: '', icePct: '' }, oil: { pct: 0 }, salt: bread ? 2 : 2.8,
-    yeastType: 'fresh', yeastPct: bread ? 0 : 0.2,
-    extras: [], preferments: [], steps: [], ddt: bread ? 25 : 23, notes: '',
+    yield: bread ? { mode: 'pieces', count: 1, pieceWeight: 900, flour: 500, loss: 0 } : fine ? { mode: 'pieces', count: 12, pieceWeight: 80, flour: 500, loss: 5 } : { mode: 'pieces', count: 6, pieceWeight: 260, flour: 1000, loss: 0 },
+    flours: [{ name: bread || fine ? 'Weizenmehl 550' : 'Tipo 00', pct: 100 }],
+    water: { pct: bread ? 72 : fine ? 30 : 65, temp: '', icePct: '' }, oil: { pct: 0 }, salt: bread ? 2 : fine ? 1.8 : 2.8,
+    yeastType: 'fresh', yeastPct: bread ? 0 : fine ? 3 : 0.2,
+    extras: fine ? [{ name: 'Milch', pct: 25 }, { name: 'Zucker', pct: 10 }, { name: 'Butter', pct: 8 }] : [], preferments: [], steps: [], ddt: bread ? 25 : fine ? 24 : 23, notes: '',
+    lamination: { pct: 0, name: '' }, pan: { shape: '', d: 0, l: 0, w: 0, n: 0 }, parts: [],
     createdAt: Date.now(), updatedAt: Date.now(),
   };
+  if (cake) {
+    // Kuchen: keine Bäckerprozente – Zutatenliste je Bestandteil + Backform
+    Object.assign(r, { flours: [], yield: { mode: 'pieces', count: 1, pieceWeight: 0, flour: 0, loss: 0 }, water: { pct: 0, temp: '', icePct: '' }, salt: 0, yeastType: '', yeastPct: 0, ddt: 22,
+      pan: { shape: 'round', d: 26, l: 0, w: 0, n: 0 }, parts: [{ id: uid(), name: 'Teig', items: [] }] });
+  }
+  return r;
 }
+const part = (name, items) => ({ id: uid(), name, items: items.map(([n, amount, unit = 'g']) => ({ name: n, amount, unit })) });
 
 function pfChain(pf) {
   const nm = pf.name || PF_TYPES[pf.type]?.label || 'Vorteig';
@@ -366,6 +451,15 @@ function pfChain(pf) {
 }
 
 export function suggestSteps(r) {
+  if (isCake(r)) {
+    const parts = (r.parts || []).length ? r.parts : [{ id: null, name: 'Teig' }];
+    const out = parts.map((p) => step('mix', `${p.name || 'Teig'} zubereiten`, 15, 'rt', { stage: p.id }));
+    out.splice(1, 0, step('preheat', 'Ofen vorheizen', 15, 'oven', { temp: '175 °C', parallel: true }));
+    out.push(step('bake', 'Backen', 45, 'oven', { temp: '175 °C', notes: 'Stäbchenprobe: Es darf kein Teig mehr kleben bleiben.' }), step('cool', 'Auskühlen', 60, 'rt'));
+    if (parts.length > 1) out.push(step('assemble', 'Füllen & fertigstellen', 20, 'rt'));
+    return out;
+  }
+  if (r.category === 'fine') return suggestFine(r);
   const out = [];
   // Mehrere Vorteige: alle gleichzeitig ansetzen (parallel), Reifezeit richtet sich nach dem ersten Vorteig.
   const chains = (r.preferments || []).map(pfChain);
@@ -400,6 +494,30 @@ export function suggestSteps(r) {
       step('bake', 'Pizza backen', 30, 'oven'),
     );
   }
+  return out;
+}
+
+// Feingebäck: mit Ziehfett → Tourieren (Croissant/Plunder), sonst angereicherter Hefeteig (Brioche, Zopf)
+function suggestFine(r) {
+  const out = [step('mix', 'Teig kneten', 15, 'rt', { stage: 'main' })];
+  if (num(r.lamination?.pct) > 0) {
+    out.push(
+      step('rest', 'Grundteig kühlen', 720, 'fridge', { temp: '4 °C', notes: 'Flach drücken, in Folie kühlen. Butterplatte vorbereiten und ebenfalls kühlen.' }),
+      step('laminate', 'Butter einschlagen + 1. Tour', 15, 'rt', { stage: 'lam', notes: 'Teig und Butter sollen gleich kühl und biegsam sein.' }),
+      step('rest', 'Kühlen', 30, 'fridge'),
+      step('laminate', '2. Tour', 10, 'rt'),
+      step('rest', 'Kühlen', 30, 'fridge'),
+      step('laminate', '3. Tour', 10, 'rt'),
+      step('rest', 'Kühlen', 60, 'fridge'),
+      step('shape', 'Ausrollen & formen', 30, 'rt'),
+      step('proof', 'Stückgare', 120, 'warm', { temp: '26 °C', notes: 'Nicht über 27 °C – sonst läuft die Butter aus.' }),
+      step('bake', 'Backen', 18, 'oven', { temp: '190 °C' }),
+    );
+  } else {
+    out.push(step('bulk', 'Stockgare', 60, 'warm', { temp: '26 °C' }), step('shape', 'Formen', 20, 'rt'),
+      step('proof', 'Stückgare', 60, 'warm', { temp: '28 °C' }), step('bake', 'Backen', 30, 'oven', { temp: '180 °C' }));
+  }
+  out.push(step('cool', 'Auskühlen', 30, 'rt'));
   return out;
 }
 
@@ -511,6 +629,155 @@ export const TEMPLATES = [
         step('preheat', 'Ofen + Topf vorheizen', 45, 'oven', { temp: '250 °C' }),
         step('bake', 'Brot backen', 45, 'oven', { temp: '250 → 230 °C', notes: '20 min mit Deckel, 25 min ohne. Kerntemperatur ≥ 96 °C.' }),
         step('cool', 'Auskühlen', 90, 'rt', { notes: 'Erst anschneiden, wenn ausgekühlt.' }),
+      ];
+      return r;
+    },
+  },
+  // ---------- Feingebäck ----------
+  {
+    id: 'croissant', cat: 'fine', icon: '🥐', name: 'Croissants', desc: '50 % Butter · 3 einfache Touren · über Nacht',
+    build() {
+      const r = blankRecipe('fine');
+      Object.assign(r, { name: 'Croissants', description: 'Blättrig und buttrig – Grundteig über Nacht, am Backtag tourieren.', salt: 2, yeastPct: 4, ddt: 24, tags: ['Viennoiserie', 'Plunderteig'] });
+      r.yield = { mode: 'pieces', count: 12, pieceWeight: 85, flour: 480, loss: 8 };
+      r.water.pct = 28;
+      r.extras = [{ name: 'Milch', pct: 28 }, { name: 'Zucker', pct: 12 }, { name: 'Butter', pct: 6 }];
+      r.lamination = { pct: 50, name: 'Butter (Tourierbutter)' };
+      r.steps = [
+        step('mix', 'Grundteig kneten', 10, 'rt', { stage: 'main', notes: 'Nur kurz kneten, bis der Teig glatt ist – zu lang geknetet zieht er sich beim Ausrollen zusammen.' }),
+        step('rest', 'Grundteig kühlen', 720, 'fridge', { temp: '4 °C', notes: 'Flach drücken, in Folie über Nacht kühlen. Butter zu einer Platte ausrollen und ebenfalls kühlen.' }),
+        step('laminate', 'Butter einschlagen + 1. Tour (einfach)', 15, 'rt', { stage: 'lam', notes: 'Butter ca. 15 min vorher aus dem Kühlschrank – sie soll biegsam sein, aber kühl (ca. 12–14 °C).' }),
+        step('rest', 'Kühlen', 30, 'fridge'),
+        step('laminate', '2. Tour (einfach)', 10, 'rt'),
+        step('rest', 'Kühlen', 30, 'fridge'),
+        step('laminate', '3. Tour (einfach)', 10, 'rt'),
+        step('rest', 'Kühlen', 60, 'fridge'),
+        step('shape', 'Ausrollen, schneiden & formen', 30, 'rt', { notes: 'Auf ca. 4 mm ausrollen, Dreiecke (ca. 9 × 25 cm) schneiden und locker aufrollen.' }),
+        step('proof', 'Stückgare', 120, 'warm', { temp: '26 °C', notes: 'Nicht über 27 °C – sonst läuft die Butter aus. Fertig, wenn sie deutlich gewachsen sind und leicht wackeln.' }),
+        step('bake', 'Backen', 18, 'oven', { temp: '190 °C', notes: 'Mit verquirltem Ei abstreichen. Ofen rechtzeitig vorheizen.' }),
+        step('cool', 'Auskühlen', 30, 'rt'),
+      ];
+      return r;
+    },
+  },
+  {
+    id: 'plunder', cat: 'fine', icon: '🌀', name: 'Dänischer Plunder', desc: 'Milch & Ei · 1 doppelte + 1 einfache Tour',
+    build() {
+      const r = blankRecipe('fine');
+      Object.assign(r, { name: 'Dänischer Plunder', description: 'Schnecken, Taschen oder Hahnenkämme – Füllung nach Wahl.', salt: 1.5, yeastPct: 5, ddt: 22, tags: ['Plunder'] });
+      r.yield = { mode: 'pieces', count: 16, pieceWeight: 70, flour: 400, loss: 8 };
+      r.water.pct = 0;
+      r.extras = [{ name: 'Milch', pct: 48 }, { name: 'Vollei', pct: 12 }, { name: 'Zucker', pct: 10 }, { name: 'Butter', pct: 8 }];
+      r.lamination = { pct: 50, name: 'Butter (Ziehfett)' };
+      r.steps = [
+        step('mix', 'Grundteig kneten', 10, 'rt', { stage: 'main', notes: 'Kalte Milch verwenden – der Teig soll kühl bleiben (ca. 22 °C).' }),
+        step('rest', 'Teig kühlen', 30, 'fridge'),
+        step('laminate', 'Butter einschlagen + 1. Tour (doppelt)', 15, 'rt', { stage: 'lam' }),
+        step('rest', 'Kühlen', 30, 'fridge'),
+        step('laminate', '2. Tour (einfach)', 10, 'rt'),
+        step('rest', 'Kühlen', 60, 'fridge'),
+        step('shape', 'Ausrollen, füllen & formen', 30, 'rt', { notes: 'Ca. 4 mm dick ausrollen. Füllung z. B. Vanillepudding, Nuss- oder Mohnfüllung.' }),
+        step('proof', 'Stückgare', 60, 'warm', { temp: '26 °C', notes: 'Nicht zu warm, sonst läuft die Butter aus.' }),
+        step('bake', 'Backen', 15, 'oven', { temp: '200 °C', notes: 'Mit Ei abstreichen.' }),
+        step('cool', 'Auskühlen & glasieren', 20, 'rt', { notes: 'Noch warm aprikotieren, nach dem Abkühlen glasieren.' }),
+      ];
+      return r;
+    },
+  },
+  {
+    id: 'brioche', cat: 'fine', icon: '🍞', name: 'Brioche', desc: '50 % Butter · 50 % Ei · Kastenform',
+    build() {
+      const r = blankRecipe('fine');
+      Object.assign(r, { name: 'Brioche', description: 'Fluffig und reichhaltig – der kalte Teig lässt sich am nächsten Tag gut formen.', salt: 2, yeastPct: 3, ddt: 24, tags: ['Brioche', 'Kastenform'] });
+      r.yield = { mode: 'pieces', count: 2, pieceWeight: 500, flour: 450, loss: 3 };
+      r.water.pct = 0;
+      r.extras = [{ name: 'Vollei', pct: 50 }, { name: 'Milch', pct: 10 }, { name: 'Zucker', pct: 12 }, { name: 'Butter', pct: 50 }];
+      r.steps = [
+        step('mix', 'Teig kneten (Butter zum Schluss)', 25, 'rt', { stage: 'main', notes: 'Erst ohne Butter ca. 10 min kneten, dann die kalte Butter in Stücken nach und nach einarbeiten, bis der Teig glänzt und sich vom Schüsselrand löst.' }),
+        step('bulk', 'Stockgare', 60, 'rt'),
+        step('rest', 'Über Nacht kühlen', 720, 'fridge', { notes: 'Kalter Teig lässt sich viel besser formen.' }),
+        step('shape', 'Formen', 20, 'rt', { notes: 'Je 6 Kugeln in die gefettete Kastenform setzen.' }),
+        step('proof', 'Stückgare', 150, 'warm', { temp: '26 °C' }),
+        step('bake', 'Backen', 30, 'oven', { temp: '180 °C', notes: 'Mit Ei abstreichen. Kerntemperatur ca. 90 °C.' }),
+        step('cool', 'Auskühlen', 60, 'rt'),
+      ];
+      return r;
+    },
+  },
+  {
+    id: 'hefezopf', cat: 'fine', icon: '🥨', name: 'Hefezopf', desc: 'Milch, Butter, Ei · ca. 3 h',
+    build() {
+      const r = blankRecipe('fine');
+      Object.assign(r, { name: 'Hefezopf', description: 'Klassischer Sonntagszopf, auf Wunsch mit Rosinen oder Hagelzucker.', salt: 1, yeastPct: 4, ddt: 26, tags: ['Zopf'] });
+      r.yield = { mode: 'pieces', count: 1, pieceWeight: 980, flour: 500, loss: 2 };
+      r.water.pct = 0;
+      r.extras = [{ name: 'Milch', pct: 50 }, { name: 'Butter', pct: 16 }, { name: 'Zucker', pct: 14 }, { name: 'Vollei', pct: 11 }];
+      r.steps = [
+        step('mix', 'Teig kneten', 15, 'rt', { stage: 'main', notes: 'Milch lauwarm (ca. 30 °C) – Butter weich zugeben.' }),
+        step('bulk', 'Gehen lassen', 60, 'warm', { temp: '26 °C', notes: 'Bis sich das Volumen etwa verdoppelt hat.' }),
+        step('shape', 'Zopf flechten', 15, 'rt', { notes: 'In 3 Stränge teilen, flechten, Enden unterschlagen.' }),
+        step('proof', 'Stückgare', 45, 'warm', { temp: '26 °C' }),
+        step('bake', 'Backen', 35, 'oven', { temp: '180 °C', notes: 'Mit Eigelb-Milch bestreichen, nach Wunsch Hagelzucker.' }),
+        step('cool', 'Auskühlen', 60, 'rt'),
+      ];
+      return r;
+    },
+  },
+  // ---------- Kuchen & Torten ----------
+  {
+    id: 'marmor', cat: 'cake', icon: '🍰', name: 'Marmorkuchen', desc: 'Rührteig · Kastenform 30 cm',
+    build() {
+      const r = blankRecipe('cake');
+      Object.assign(r, { name: 'Marmorkuchen', description: 'Saftiger Rührkuchen – hell und dunkel marmoriert.', tags: ['Rührteig'] });
+      r.pan = { shape: 'rect', d: 0, l: 30, w: 11, n: 0 };
+      const a = part('Rührteig', [['Butter (weich)', 250], ['Zucker', 200], ['Vanillezucker', 1, 'Pck'], ['Salz', 1, 'Prise'], ['Eier', 4, 'Stk'], ['Weizenmehl 405', 375], ['Backpulver', 1, 'Pck'], ['Milch', 125, 'ml']]);
+      const b = part('Dunkler Teig', [['Kakaopulver', 20], ['Zucker', 20], ['Milch', 30, 'ml']]);
+      r.parts = [a, b];
+      r.steps = [
+        step('mix', 'Rührteig zubereiten', 15, 'rt', { stage: a.id, notes: 'Butter, Zucker, Vanillezucker und Salz cremig rühren. Eier einzeln unterrühren. Mehl mit Backpulver im Wechsel mit der Milch unterrühren.' }),
+        step('preheat', 'Ofen vorheizen', 15, 'oven', { temp: '175 °C Ober-/Unterhitze', parallel: true }),
+        step('mix', 'Dunklen Teig marmorieren', 5, 'rt', { stage: b.id, notes: 'Ein Drittel des Teigs mit Kakao, Zucker und Milch verrühren. Abwechselnd in die Form füllen und mit einer Gabel spiralförmig durchziehen.' }),
+        step('bake', 'Backen', 55, 'oven', { temp: '175 °C', notes: 'Stäbchenprobe: Es darf kein Teig mehr kleben bleiben.' }),
+        step('cool', 'Auskühlen', 60, 'rt', { notes: '10 min in der Form ruhen lassen, dann stürzen.' }),
+      ];
+      return r;
+    },
+  },
+  {
+    id: 'biskuit', cat: 'cake', icon: '🎂', name: 'Biskuitboden', desc: 'Für Torten · Springform Ø 26 cm',
+    build() {
+      const r = blankRecipe('cake');
+      Object.assign(r, { name: 'Biskuitboden', description: 'Luftiger Boden für Torten – zweimal durchschneiden und füllen.', tags: ['Biskuit', 'Torte'] });
+      r.pan = { shape: 'round', d: 26, l: 0, w: 0, n: 0 };
+      const a = part('Biskuit', [['Eier', 4, 'Stk'], ['Zucker', 120], ['Vanillezucker', 1, 'Pck'], ['Salz', 1, 'Prise'], ['Weizenmehl 405', 80], ['Speisestärke', 40], ['Backpulver', 1, 'TL']]);
+      r.parts = [a];
+      r.steps = [
+        step('mix', 'Eischaum aufschlagen', 15, 'rt', { stage: a.id, notes: 'Eier mit Zucker, Vanillezucker und Salz 8–10 min hell-cremig aufschlagen. Mehl, Stärke und Backpulver darübersieben und vorsichtig unterheben.' }),
+        step('preheat', 'Ofen vorheizen', 15, 'oven', { temp: '180 °C Ober-/Unterhitze', parallel: true }),
+        step('bake', 'Backen', 25, 'oven', { temp: '180 °C', notes: 'Nur den Boden der Springform mit Backpapier auslegen, den Rand nicht fetten. Ofentür nicht öffnen.' }),
+        step('cool', 'Auskühlen', 120, 'rt', { notes: 'Kopfüber auskühlen lassen, dann zweimal waagrecht durchschneiden.' }),
+      ];
+      return r;
+    },
+  },
+  {
+    id: 'kaesekuchen', cat: 'cake', icon: '🧀', name: 'Käsekuchen', desc: 'Mürbeteig + Quarkfüllung · Ø 26 cm',
+    build() {
+      const r = blankRecipe('cake');
+      Object.assign(r, { name: 'Käsekuchen', description: 'Cremiger Quarkkuchen auf Mürbeteig-Boden.', tags: ['Mürbeteig', 'Quark'] });
+      r.pan = { shape: 'round', d: 26, l: 0, w: 0, n: 0 };
+      const a = part('Mürbeteig', [['Weizenmehl 405', 200], ['Butter (kalt)', 100], ['Zucker', 70], ['Ei', 1, 'Stk'], ['Backpulver', 1, 'TL']]);
+      const b = part('Quarkfüllung', [['Magerquark', 750], ['Zucker', 180], ['Eier', 3, 'Stk'], ['Sahne', 200, 'ml'], ['Speisestärke', 40], ['Vanillezucker', 1, 'Pck'], ['Zitronenabrieb', 1, 'TL']]);
+      r.parts = [a, b];
+      r.steps = [
+        step('mix', 'Mürbeteig kneten', 10, 'rt', { stage: a.id, notes: 'Schnell zu einem glatten Teig verkneten, nicht zu lange – sonst wird er brüchig.' }),
+        step('rest', 'Teig kühlen', 30, 'fridge'),
+        step('mix', 'Füllung rühren', 10, 'rt', { stage: b.id, notes: 'Alle Zutaten glatt rühren, nicht schaumig schlagen.' }),
+        step('preheat', 'Ofen vorheizen', 15, 'oven', { temp: '170 °C Ober-/Unterhitze', parallel: true }),
+        step('shape', 'Form auslegen & füllen', 10, 'rt', { notes: 'Boden und ca. 3 cm Rand mit dem Teig auslegen, Füllung einfüllen.' }),
+        step('bake', 'Backen', 70, 'oven', { temp: '170 °C', notes: 'Danach bei leicht geöffneter Ofentür 15 min ruhen lassen – so reißt er weniger.' }),
+        step('cool', 'Auskühlen', 180, 'rt'),
+        step('rest', 'Durchkühlen', 240, 'fridge', { notes: 'Am besten über Nacht – dann lässt er sich sauber schneiden.' }),
       ];
       return r;
     },

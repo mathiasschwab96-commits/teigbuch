@@ -123,6 +123,73 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
     && MG.importRecipe({ ...roundtrip(r), water: { pct: 70, icePct: 250 } }).rec.water.icePct === 100);
 }
 
+// ---------- 3c) Sicherung aus App 1.8 (Schema 3) → Schema 4 (Feingebäck & Kuchen) ----------
+{
+  group('Sicherung aus App 1.8 (backup-format2-app1.8.json)');
+  const f = await load('backup-format2-app1.8.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 4, `v=${r.v}`);
+  check('Neue Felder leer ergänzt: kein Ziehfett, keine Form, keine Bestandteile', r.lamination.pct === 0 && r.pan.shape === '' && Array.isArray(r.parts) && r.parts.length === 0);
+  check('Kategorie, Wassertemperatur und Vorteig unverändert', r.category === 'bread' && r.water.temp === 28 && r.preferments[0].starterPct === 100);
+  check('Keine Rückfragen nötig', MG.openQuestions(r).length === 0);
+  const c = C.calc(r);
+  check('Mengen unverändert: 500 g Mehl, 885 g Teig', near(c.F, 500, 0.01) && near(c.D, 885, 0.5), C.fmtG(c.D));
+  check('Sauerteig 70 g Anstellgut + 70 g Mehl + 70 g Wasser', near(c.pfs[0].starter, 70, 0.05) && near(c.pfs[0].freshFlour, 70, 0.05) && near(c.pfs[0].freshWater, 70, 0.05));
+  check('Ohne Ziehfett: Teig ohne Butteranteil', c.lam.g === 0 && near(c.lam.base, c.D, 0.001));
+  check('Ablauf erhalten (Zuordnung Vorteig/Hauptteig)', r.steps.length === 6 && r.steps[0].stage === r.preferments[0].id && r.steps[2].stage === 'main');
+  const l = MG.importLog(f.logs[0]).rec;
+  check('Tagebuch übernommen, Form leer ergänzt', l.v === MG.SCHEMA && l.rating === 4 && l.waterTemp === '28' && l.params.pan === '' && l.params.totalHours === 16);
+  const twice = MG.migrateRecipe(MG.migrateRecipe({ ...f.recipes[0] }).rec).rec;
+  check('Migration ist idempotent', twice.lamination.pct === 0 && twice.pan.shape === '' && twice.parts.length === 0 && twice.v === MG.SCHEMA);
+  const back = MG.importRecipe(roundtrip(r)).rec;
+  check('Export → Import ändert nichts', JSON.stringify(C.calc(back).totals) === JSON.stringify(c.totals) && back.steps.length === r.steps.length);
+}
+
+// ---------- 6) Feingebäck (Ziehfett) und Kuchen (Formen) ----------
+{
+  group('Feingebäck & Kuchen (Schema 4)');
+  // a) Ziehfett gehört zum Teiggewicht
+  const cr = C.TEMPLATES.find((t) => t.id === 'croissant').build();
+  const c = C.calc(cr);
+  check('Croissant: 12 × 85 g + 8 % Verschnitt = 1101,6 g Teig', near(c.D, 1101.6, 0.5), C.fmtG(c.D));
+  check('Ziehfett = 50 % vom Mehl, Grundteig + Ziehfett = Teig', near(c.lam.g, c.F * 0.5, 0.01) && near(c.lam.base + c.lam.g, c.D, 0.001));
+  check('Wirksame Flüssigkeit zählt Milch und Butter mit', c.totals.hydEff > c.totals.hydration + 20, `${C.fmtPct(c.totals.hydration)} → ${C.fmtPct(c.totals.hydEff)}`);
+  const unk = MG.importRecipe({ ...roundtrip(cr), v: MG.SCHEMA, lamination: { pct: 55, name: 'Butter', futureLamField: 'x' } }).rec;
+  check('Ziehfett: unbekannte Felder bleiben erhalten', unk.lamination.pct === 55 && unk.lamination.futureLamField === 'x');
+  check('Ziehfett: ungültige Werte bereinigt', MG.importRecipe({ ...roundtrip(cr), lamination: { pct: -5, name: 7 } }).rec.lamination.pct === 0);
+  check('Schritt-Art „Tourieren“ bleibt erhalten', MG.importRecipe(roundtrip(cr)).rec.steps.filter((s) => s.kind === 'laminate').length === 3);
+  // b) Kuchen: Umrechnen nach Fläche, Stück, Faktor
+  const mk = C.TEMPLATES.find((t) => t.id === 'biskuit').build();
+  check('Ø 26 → Ø 20 cm: Faktor (20/26)² ≈ 0,59', near(C.calcCake(mk, { pan: { shape: 'round', d: 20 } }).factor, (20 / 26) ** 2, 0.0001));
+  const k20 = C.calcCake(mk, { pan: { shape: 'round', d: 20 } });
+  check('Zucker 120 g → 71 g', near(k20.parts[0].items.find((i) => i.name === 'Zucker').v, 120 * (20 / 26) ** 2, 0.01));
+  check('Rund → eckig (30 × 20) nach Fläche', near(C.calcCake(mk, { pan: { shape: 'rect', l: 30, w: 20 } }).factor, 600 / (Math.PI * 169), 0.0001));
+  check('Faktor direkt (1,5×)', C.calcCake(mk, { factor: 1.5 }).factor === 1.5);
+  const muf = { ...mk, pan: { shape: 'count', n: 12 } };
+  check('12 → 18 Muffins: Faktor 1,5', C.calcCake(muf, { pan: { shape: 'count', n: 18 } }).factor === 1.5);
+  check('Stück ↔ Form nicht umrechenbar → Rezeptmenge + Hinweis', (() => { const x = C.calcCake(muf, { pan: { shape: 'round', d: 20 } }); return x.factor === 1 && x.warnings.length === 1; })());
+  check('Eier: ungefähres Gewicht pro Stück', C.pieceGrams('Eier') === 52 && C.pieceGrams('Eigelb') === 18 && C.pieceGrams('Mehl') === 0);
+  // c) Kuchen-Daten: Bereinigung & Erhalt
+  const back = MG.importRecipe(roundtrip({ ...mk, v: MG.SCHEMA })).rec;
+  check('Kuchen: Export → Import erhält Form, Bestandteile, Einheiten, Zuordnung', back.pan.shape === 'round' && back.pan.d === 26 && back.parts[0].items.length === 7
+    && back.parts[0].items[0].unit === 'Stk' && back.steps[0].stage === back.parts[0].id);
+  check('Kuchen: keine Rückfragen (kein Teiglingsgewicht nötig)', MG.openQuestions(back).length === 0);
+  const evil = MG.importRecipe({ ...roundtrip(mk), pan: { shape: 'hexagon', d: -3 }, parts: [{ id: '<x>', name: '<b>', items: [{ name: 'A', amount: -2, unit: 'Eimer' }], futurePart: 1 }] }).rec;
+  check('Kuchen: ungültige Werte bereinigt (Form, Menge, Einheit)', evil.pan.shape === '' && evil.pan.d === 0 && evil.parts[0].items[0].amount === 0 && evil.parts[0].items[0].unit === 'g' && evil.parts[0].id === 'x');
+  check('Kuchen: unbekannte Felder bleiben erhalten', evil.parts[0].futurePart === 1);
+  check('Kategorien Feingebäck & Kuchen werden akzeptiert', MG.importRecipe({ ...roundtrip(cr) }).rec.category === 'fine' && back.category === 'cake');
+  // d) KI-Brücke: Kuchen (Format B) und Croissant mit Ziehfett
+  const KI = await import('../ki-import.js');
+  const kc = MG.importRecipe(KI.kiToRecipe({ name: 'Rührkuchen', category: 'cake', pan: { shape: 'rect', length_cm: 30, width_cm: 11 },
+    parts: [{ name: 'Teig', items: [{ name: 'Mehl', amount: 0.3, unit: 'kg' }, { name: 'Eier', amount: 4, unit: 'Stück' }, { name: 'Milch', amount: 125, unit: 'ml' }, { name: 'Backpulver', amount: 1, unit: 'Päckchen' }] }],
+    steps: [{ kind: 'mix', name: 'Rühren', minutes: 10, stage: 'part1' }, { kind: 'bake', name: 'Backen', minutes: 50, location: 'oven' }] }, { schema: MG.SCHEMA }).recipe).rec;
+  check('KI: Kuchen mit Form, Einheiten (kg → g, Stück → Stk) und Zuordnung', kc.category === 'cake' && kc.pan.l === 30 && kc.parts[0].items[0].amount === 300 && kc.parts[0].items[0].unit === 'g'
+    && kc.parts[0].items[1].unit === 'Stk' && kc.parts[0].items[3].unit === 'Pck' && kc.steps[0].stage === kc.parts[0].id);
+  const kr = MG.importRecipe(KI.kiToRecipe({ name: 'Croissant', category: 'fine', yeastType: 'fresh', main: { flours: [{ name: 'Weizenmehl 550', g: 500 }], water_g: 140, salt_g: 10, yeast_g: 20,
+    extras: [{ name: 'Milch', g: 140 }, { name: 'Zucker', g: 60 }] }, lamination: { name: 'Butter', g: 250 } }, { schema: MG.SCHEMA }).recipe).rec;
+  check('KI: Croissant – Ziehfett 250 g = 50 %, Kategorie Feingebäck', kr.category === 'fine' && near(kr.lamination.pct, 50, 0.001) && near(C.calc(kr).lam.g, 250, 0.05));
+}
+
 // ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
 {
   group('Rezept aus KI-Antwort (ki-import.js)');
@@ -179,7 +246,8 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   for (const t of C.TEMPLATES) {
     const r = t.build(); r.v = MG.SCHEMA;
     const back = MG.importRecipe(roundtrip(r)).rec;
-    const same = JSON.stringify(C.calc(back).totals) === JSON.stringify(C.calc(r).totals) && back.steps.length === r.steps.length
+    const calcAny = (x) => (C.isCake(x) ? C.calcCake(x).total : C.calc(x).totals);
+    const same = JSON.stringify(calcAny(back)) === JSON.stringify(calcAny(r)) && back.steps.length === r.steps.length
       && back.steps.every((s, i) => s.durationMin === r.steps[i].durationMin && s.location === r.steps[i].location && s.stage === r.steps[i].stage);
     check(`„${r.name}“ unverändert`, same && MG.openQuestions(back).length === 0);
   }

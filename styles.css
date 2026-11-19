@@ -207,6 +207,17 @@ select.in { appearance: auto; }
 .unit-in .u { position: absolute; right: 14px; color: var(--muted); font-size: .9rem; pointer-events: none; }
 .w90 { flex: 0 0 100px; }
 .w60 { flex: 0 0 60px; text-align: right; }
+.w70 { flex: 0 0 70px; width: 70px; text-align: right; }
+.w80 { flex: 0 0 78px; width: 78px; padding-left: 8px; padding-right: 4px; }
+/* Kategorien (5 Stück) dürfen umbrechen statt zu scrollen */
+.seg.wrap { flex-wrap: wrap; overflow: visible; border-radius: var(--r-sm); }
+.seg.wrap > button { flex: 1 1 auto; border-radius: 10px; }
+.cake-part .cake-item .in.grow { min-width: 0; }
+.cake-part .cake-item { gap: 5px; }
+.cake-part .cake-item .w70 { flex-basis: 58px; width: 58px; padding-left: 6px; padding-right: 6px; }
+.cake-part .cake-item .w80 { flex-basis: 66px; width: 66px; padding-left: 6px; }
+.cake-part .cake-item .icon-btn { width: 30px; flex: 0 0 30px; }
+.tpl-grid + .sec { margin-top: 22px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 .grid2 .fld { margin: 8px 0; }
 .check { display: flex; align-items: center; gap: 10px; margin: 12px 0; font-size: .95rem; }
