@@ -8,7 +8,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '1.8.0';
+const VERSION = '1.8.1';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -725,13 +725,15 @@ function gramDef(key) {
   if (a === 'ex') { const e = d.extras[+b]; return { get: (c) => c.main.extras[+b]?.g || 0, pct: () => num(e?.pct), set: (v) => { e.pct = v; } }; }
   if (a === 'pf') {
     const pf = d.preferments[+b];
-    const [g, p] = { flour: ['flour', 'flourPct'], water: ['water', 'hydration'], yeast: ['yeast', 'yeastPct'], starter: ['starter', 'starterPct'] }[c2];
+    // Gramm-Felder zeigen die FRISCH zugegebenen Mengen (wie im Rezepttext) – ohne Mehl/Wasser im Anstellgut
+    const [g, p] = { flour: ['freshFlour', 'flourPct'], water: ['freshWater', 'hydration'], yeast: ['yeast', 'yeastPct'], starter: ['starter', 'starterPct'] }[c2];
     return { get: (c) => c.pfs[+b]?.[g] || 0, pct: () => num(pf?.[p]), set: (v) => { pf[p] = v; } };
   }
   return null;
 }
 // Prozentwert so lange anpassen, bis die gewünschte Grammzahl herauskommt (konvergiert in wenigen Schritten)
 function solveGram(key, target) {
+  if (key.startsWith('pf.')) { const [, i, f] = key.split('.'); solvePf(+i, f, target); return; }
   const g = gramDef(key);
   if (!g) return;
   if (!(target > 0)) { g.set(0); return; }
@@ -747,6 +749,30 @@ function solveGram(key, target) {
   // Rundungsreste wie 50,0001 % auf glatte Werte setzen
   const r2 = Math.round(p * 100) / 100;
   g.set(Math.abs(p - r2) < 0.0005 ? r2 : Math.round(p * 10000) / 10000);
+}
+// Vorteig in Gramm: frisches Mehl, frisches Wasser, Anstellgut und Hefe GEMEINSAM in Prozente umrechnen,
+// damit sich bereits eingetragene Werte nicht verschieben (Anstellgut enthält selbst Mehl und Wasser).
+function solvePf(i, field, target) {
+  const d = S.draft, pf = d.preferments[i];
+  const x = calc(d).pfs[i];
+  if (!pf || !x) return;
+  const v = { flour: x.freshFlour, water: x.freshWater, starter: x.starter, yeast: x.yeast };
+  v[field] = Math.max(0, num(target));
+  const sh = num(pf.starterHydration ?? 100) / 100;
+  const sFlour = v.starter / (1 + sh), sWater = v.starter - sFlour;
+  // Nur Anstellgut ohne frisches Mehl: das reife Anstellgut selbst ist der Vorteig
+  const onlyStarter = v.starter > 0 && v.flour <= 0;
+  const flour = onlyStarter ? sFlour : v.flour + sFlour, water = onlyStarter ? sWater : v.water + sWater;
+  const r = (n, dec = 4) => Math.round(n * 10 ** dec) / 10 ** dec;
+  for (let k = 0; k < 8; k++) {
+    const F = calc(d).F;
+    if (!(F > 0)) break;
+    pf.flourPct = r((flour / F) * 100);
+    pf.hydration = flour > 0 ? r((water / flour) * 100, 2) : 0;
+    pf.starterPct = onlyStarter || !(v.flour > 0) ? 0 : r((v.starter / v.flour) * 100, 2);
+    if (onlyStarter) pf.hydration = r(sh * 100, 2);
+    pf.yeastPct = flour > 0 ? r((v.yeast / flour) * 100) : 0;
+  }
 }
 function amt(key, label, pctHint = '') {
   const input = gramMode()
@@ -872,8 +898,8 @@ function wVorteig(d) {
       <div class="seg small">${Object.entries(PF_TYPES).map(([k, v]) => `<button class="${pf.type === k ? 'on' : ''}" data-action="pfType" data-i="${i}" data-v="${k}">${v.label}</button>`).join('')}</div>
       <details class="info"><summary>ⓘ Typische Werte</summary><p>${t.info}</p></details>
       <div class="grid2">
-        ${amt(`pf.${i}.flour`, gramMode() ? 'Mehl' : 'Mehlanteil', 'vom Gesamtmehl')}
-        ${amt(`pf.${i}.water`, gramMode() ? 'Wasser' : 'Hydration')}
+        ${amt(`pf.${i}.flour`, gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', 'vom Gesamtmehl')}
+        ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? 'Wasser (frisch)' : 'Wasser') : 'Hydration')}
         ${showYeast ? amt(`pf.${i}.yeast`, `${yeastName(d.yeastType)}`, 'vom Vorteigmehl') : ''}
         ${showStarter ? amt(`pf.${i}.starter`, pf.type === 'madre' ? 'Madre (Anstellgut)' : 'Anstellgut', 'vom frischen Mehl') : ''}
         ${showStarter ? fldU(pf.type === 'madre' ? 'Hydration Madre' : 'Hydration Anstellgut', numIn(`preferments.${i}.starterHydration`, pf.starterHydration ?? 100), '%') : ''}
