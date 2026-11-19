@@ -94,6 +94,85 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   check('Tagebuch: unbekannte Felder erhalten', l.newer && l.rec.futureLogField === 'x' && l.rec.params.futureParam === 1);
 }
 
+// ---------- 3b) Sicherung aus App 1.6 (Format 2, Schema 2) → Schema 3 (Wassertemperatur & Eis) ----------
+{
+  group('Sicherung aus App 1.6 (backup-format2-app1.6.json)');
+  const f = await load('backup-format2-app1.6.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer, `v=${r.v}`);
+  check('Wasser-Angaben leer ergänzt (keine Annahme)', r.water.temp === '' && r.water.icePct === '' && r.water.pct === 71.43);
+  check('Keine Rückfragen nötig', MG.openQuestions(r).length === 0);
+  const c = C.calc(r);
+  check('Mengen unverändert: 700 g Mehl, Biga 200/100/5 g', near(c.F, 700, 0.01) && near(c.pfs[0].flour, 200, 0.1) && near(c.pfs[0].water, 100, 0.1) && near(c.pfs[0].yeast, 5, 0.01));
+  check('Ohne Angabe: kein Eis, keine Wassertemperatur', c.main.ice === 0 && c.main.waterTemp === '');
+  check('Ablauf & Favorit erhalten', r.steps.length === 5 && r.steps[0].stage === r.preferments[0].id && r.favorite === true);
+  const l = MG.importLog(f.logs[0]).rec;
+  check('Tagebuch übernommen + neue Felder leer', l.v === MG.SCHEMA && l.rating === 5 && l.doughTemp === '24.5' && l.waterTemp === '' && l.iceG === '' && l.params.count === 4);
+  // Neue Angaben setzen → Eis ersetzt Wasser, Hydration bleibt
+  r.water.temp = 6; r.water.icePct = 25;
+  const c2 = C.calc(r);
+  check('25 % Eis = 100 g vom Hauptteig-Wasser', near(c2.main.ice, 100, 0.1) && near(c2.main.water, 400, 0.2), C.fmtG(c2.main.ice));
+  check('Hydration und Teigmenge bleiben gleich', near(c2.totals.hydration, c.totals.hydration, 0.0001) && near(c2.D, c.D, 0.001));
+  const back = MG.importRecipe(roundtrip(r)).rec;
+  check('Export → Import erhält Wassertemperatur & Eis', back.water.temp === 6 && back.water.icePct === 25);
+  const twice = MG.migrateRecipe(MG.migrateRecipe({ ...f.recipes[0] }).rec).rec;
+  check('Migration ist idempotent', twice.water.temp === '' && twice.water.icePct === '' && twice.v === MG.SCHEMA);
+  const unk = MG.importRecipe({ ...roundtrip(r), water: { pct: 70, temp: 5, icePct: 10, futureWaterField: 'x' } }).rec;
+  check('Unbekannte Wasser-Felder bleiben erhalten', unk.water.futureWaterField === 'x');
+  check('Ungültige Werte werden bereinigt', MG.importRecipe({ ...roundtrip(r), water: { pct: 70, temp: 'abc', icePct: 250 } }).rec.water.temp === ''
+    && MG.importRecipe({ ...roundtrip(r), water: { pct: 70, icePct: 250 } }).rec.water.icePct === 100);
+}
+
+// ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
+{
+  group('Rezept aus KI-Antwort (ki-import.js)');
+  const KI = await import('../ki-import.js');
+  const imp = (d) => MG.importRecipe(KI.kiToRecipe(d, { schema: MG.SCHEMA }).recipe).rec;
+  // a) Biga – Antwort mit Begleittext, Codeblock, „schlauen“ Anführungszeichen und überzähligem Komma
+  const answer = `Klar! Hier ist das Rezept:\n\`\`\`json\n{ "teigbuch": "ki-1", "name": „Pizza mit Biga“, "category": "pizza", "yeastType": "dry",
+    "pieces": {"count": 5, "weight_g": 244},
+    "preferments": [{"type": "biga", "name": "Biga", "flour_name": "Tipo 00", "flour_g": 200, "water_g": 100, "yeast_g": 5}],
+    "main": {"flours": [{"name": "Tipo 00", "g": 500}], "water_g": 400, "salt_g": 15, "yeast_g": 0, "oil_g": 0, "extras": []},
+    "steps": [{"kind": "prep", "name": "Biga ansetzen", "minutes": 10, "location": "rt", "stage": "pf1"},
+              {"kind": "rest", "name": "Biga reifen", "minutes": 2880, "location": "fridge", "stage": "pf1"},
+              {"kind": "mix", "name": "Hauptteig kneten", "minutes": 15, "location": "rt", "stage": "main"},
+              {"kind": "fold", "name": "Dehnen & Falten", "minutes": 120, "location": "rt", "repeat": {"count": 4, "interval_min": 30}},],
+    "notes": "" }\n\`\`\`\nGuten Appetit!`;
+  const biga = imp(KI.extractJSON(answer)), cb = C.calc(biga);
+  check('Antwort mit Begleittext wird gelesen', biga.name === 'Pizza mit Biga');
+  check('Biga: 700 g Mehl, Teig 1220 g (wie Original)', near(cb.F, 700, 0.01) && near(cb.D, 1220, 0.5), C.fmtG(cb.D));
+  check('Biga 200/100/5 g, Hauptteig 500 g Mehl / 400 g Wasser / 15 g Salz', near(cb.pfs[0].flour, 200, 0.1) && near(cb.pfs[0].water, 100, 0.1) && near(cb.pfs[0].yeast, 5, 0.01)
+    && near(cb.main.flours[0].g, 500, 0.1) && near(cb.main.water, 400, 0.2) && near(cb.main.salt, 15, 0.05));
+  check('Hydration 71,4 %, Trockenhefe, 5 × 244 g', near(biga.water.pct, 71.43, 0.01) && biga.yeastType === 'dry' && biga.yield.count === 5 && biga.yield.pieceWeight === 244);
+  check('Schritte inkl. Vorteig-Zuordnung und Wiederholung', biga.steps.length === 4 && biga.steps[0].stage === biga.preferments[0].id && biga.steps[2].stage === 'main'
+    && biga.steps[1].location === 'fridge' && biga.steps[3].repeat?.count === 4);
+  check('Keine Rückfragen nötig', MG.openQuestions(biga).length === 0);
+  // b) Sauerteig: Levain mit Anstellgut + Mehlmischung
+  const sd = imp({ name: 'Landbrot', category: 'bread', yeastType: '',
+    preferments: [{ type: 'levain', name: 'Levain', flour_name: 'Weizenmehl 550', flour_g: 50, water_g: 50, starter_g: 20, starter_hydration: 100 }],
+    main: { flours: [{ name: 'Weizenmehl 550', g: 350 }, { name: 'Roggenmehl 1150', g: 50 }], water_g: 280, salt_g: 9 }, steps: [] });
+  const cs = C.calc(sd);
+  check('Levain: 20 g Anstellgut + 50 g Mehl + 50 g Wasser', near(cs.pfs[0].starter, 20, 0.05) && near(cs.pfs[0].freshFlour, 50, 0.05) && near(cs.pfs[0].freshWater, 50, 0.05));
+  // Gesamtmehl = 350 + 50 (Hauptteig) + 50 (Levain) + 10 (Mehl im Anstellgut) = 460 g
+  check('Mehlmischung inkl. Mehl im Anstellgut (460 g, Roggen 10,9 %), Hauptteig 280 g Wasser', near(cs.F, 460, 0.01) && sd.flours.length === 2 && near(sd.flours[1].pct, 10.87, 0.01) && near(cs.main.water, 280, 0.2) && near(cs.main.flours[0].g, 350, 0.1));
+  check('Ohne Hefe: keine Rückfrage zur Hefe-Art', MG.openQuestions(sd).length === 0);
+  // c) Anstellgut direkt im Hauptteig + Eis + Wassertemperatur
+  const di = imp({ name: 'Schnelles Sauerteigbrot', category: 'bread',
+    preferments: [{ type: 'levain', name: 'Anstellgut', flour_g: 0, water_g: 0, starter_g: 100, starter_hydration: 100 }],
+    main: { flours: [{ name: 'Weizenmehl 550', g: 450 }], water_g: 280, ice_g: 50, water_temp_c: 8, salt_g: 10 } });
+  const cd = C.calc(di);
+  check('Anstellgut direkt: 500 g Mehl, 76 % Hydration, 890 g Teig', near(cd.F, 500, 0.01) && near(di.water.pct, 76, 0.01) && near(cd.D, 890, 0.5));
+  check('Eis 50 g + Wasser 8 °C werden übernommen', near(cd.main.ice, 50, 0.1) && di.water.temp === 8 && near(cd.main.water - cd.main.ice, 280, 0.2));
+  // d) Fehlerfälle
+  const err = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+  check('Antwort ohne Rezept-Code → verständlicher Fehler', /kein Rezept-Code/.test(err(() => KI.extractJSON('Ich kann das Bild leider nicht lesen.'))));
+  check('Abgeschnittene Antwort → verständlicher Fehler', /unvollständig/.test(err(() => KI.extractJSON('{"name": "x", "main": {"flours": [ {"name"'))));
+  check('Ohne Mehl → verständlicher Fehler', /keine Mehlmenge/.test(err(() => KI.kiToRecipe({ main: { water_g: 300 } }))));
+  const evil = imp({ name: '<img src=x onerror=alert(1)>', category: 'evil', main: { flours: [{ name: 'Mehl', g: 100 }], water_g: 60 }, steps: [{ kind: 'hack', location: 'mars', minutes: -5 }] });
+  check('Unbekannte Werte werden bereinigt (Kategorie, Schritt-Art, Ort, Dauer)', evil.category === '' && evil.steps[0].kind === 'other' && evil.steps[0].location === 'rt' && evil.steps[0].durationMin === 0);
+  check('Auftragstext enthält Link bzw. Text', KI.buildPrompt('https://example.com/rezept').includes('https://example.com/rezept') && KI.buildPrompt('500 g Mehl').includes('500 g Mehl'));
+}
+
 // ---------- 4) Alle Vorlagen überstehen Export → Import ----------
 {
   group('Vorlagen: Export → Import (aktuelles Format)');
