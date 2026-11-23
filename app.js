@@ -8,7 +8,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '1.9.0';
+const VERSION = '2.2.0';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -16,7 +16,7 @@ const { importRecipe, importLog } = MG;
 if (typeof globalThis.structuredClone !== 'function') globalThis.structuredClone = (o) => JSON.parse(JSON.stringify(o));
 
 const S = {
-  recipes: [], logs: [], sessions: [],
+  recipes: [], logs: [], sessions: [], cultures: [],
   settings: { id: 'settings', nightFrom: 23, nightTo: 7, lastBackup: 0, ddtRoom: 22, ddtFlour: 21, ddtPf: 22, ddtFriction: 3, refRoom: 22,
     features: { tempComp: true, handsFree: true, voice: true, wakeLock: true, qr: true, nightOpt: true } },
   hands: null, ticks: new Set(), measOpen: null, ki: { input: '', answer: '', error: '' }, importPreview: null, scanStream: null, logNewPhotos: [], searchOpen: false,
@@ -48,6 +48,7 @@ const calcFor = (r, ov) => (isCake(r) ? C.calcCake(r, ov) : calc(r, ov));
 
 // ---------- Funktionen an/aus ----------
 const feat = (k) => S.settings.features?.[k] !== false;
+const FEATURES = ['tempComp', 'handsFree', 'confirmEarly', 'adjust', 'nightOpt', 'pastry', 'cultures', 'qr'];
 // Schritte eines Backvorgangs inkl. Temperatur-Ausgleich
 // (±-Verschiebungen per Knopf werden NACH dem Ausgleich addiert, damit +15 min auch +15 min bleiben)
 const effSteps = (s) => (feat('tempComp') ? C.compensateSteps(s.steps, { room: s.room, refRoom: S.settings.refRoom }) : s.steps)
@@ -193,6 +194,8 @@ function render() {
     else if (a === 'plan') out = vPlan(b);
     else if (a === 'bake') { tab = 'bake'; out = b ? vSession(b) : vBakeList(); }
     else if (a === 'log') out = vLog(b, c, q);
+    else if (a === 'cmp') out = vCmp(b, q);
+    else if (a === 'culture') { tab = 'bake'; out = vCulture(b); }
     else if (a === 'import') out = vImport(b || '');
     else if (a === 'fix') out = vFix();
     else if (a === 'ki') out = vKi();
@@ -250,6 +253,7 @@ function vList() {
   </header>
   <div class="pad">
     ${sessionBanners(active)}
+    ${cultureHint()}
     ${fixHint()}
     ${backupHint()}
     ${S.recipes.length ? `
@@ -276,7 +280,7 @@ function listCards() {
       <div class="rcard-img ph">${cover ? `<img data-photo="${cover}" alt="">` : ''}<span class="ph-emoji">${catOf(r.category).icon}</span></div>
       <div class="rcard-body">
         <div class="rcard-title">${r.favorite ? '<span class="fav">★</span> ' : ''}${esc(r.name || 'Ohne Namen')}</div>
-        <div class="meta">${isCake(r) ? `${esc(C.panLabel(r.pan) || 'Kuchen')} · ${(r.parts || []).reduce((n, p) => n + (p.items || []).length, 0)} Zutaten` : `${pfLabel(r.preferments)} · ${fmtNum(r.water?.pct)} %${num(r.lamination?.pct) > 0 ? ' · 🧈 touriert' : ''}`}${r.steps?.length ? ` · ${fmtDur(info.total)}` : ''}</div>
+        <div class="meta">${isCake(r) ? `${esc(C.panLabel(r.pan) || 'Kuchen')} · ${(r.parts || []).reduce((n, p) => n + (p.items || []).length, 0)} Zutaten` : `${pfLabel(r.preferments)} · ${num(r.water?.pct) > 0 ? `${fmtNum(r.water.pct)} %` : `wirksam ${fmtPct(calc(r).totals.hydEff)}`}${num(r.lamination?.pct) > 0 ? ' · 🧈 touriert' : ''}`}${r.steps?.length ? ` · ${fmtDur(info.total)}` : ''}</div>
         ${avg ? `<div class="meta">${stars(avg)} <small>${n}×</small></div>` : ''}
       </div></a>`;
   }).join('');
@@ -304,7 +308,7 @@ function backupHint() {
 function sessionBanner(s) {
   const now = Date.now();
   const info = planInfo(effSteps(s), s.startAt, now);
-  const cur = info.tl.find((x) => !x.doneAt);
+  const cur = curStep(info.tl);
   const planned = cur && cur.i === 0 && cur.start > now;
   return `<a class="banner" href="#/bake/${s.id}">
     <div class="banner-k"><span>${planned ? '🗓️' : '🔥'} ${esc(s.recipeName)}</span><span>Backen ${fmtRel(info.bakeAt)}</span></div>
@@ -379,7 +383,7 @@ function vRecipe(id, tab) {
     ${r.source ? `<p class="small muted" style="margin:4px 0 0">Quelle: ${/^https?:\/\/\S+$/i.test(r.source) ? `<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(r.source.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '').slice(0, 48))}</a>` : esc(r.source)}</p>` : ''}
     <div class="facts">
       ${cake ? `${C.panLabel(r.pan) ? `<span class="fact">⭕ ${esc(C.panLabel(r.pan))}</span>` : ''}<span class="fact">⚖️ ≈ ${fmtG(c.total)}</span>`
-        : `<span class="fact">💧 ${fmtPct(c.totals.hydration)}${showEff(c) ? ` <small>· wirksam ${fmtPct(c.totals.hydEff)}</small>` : ''}</span>
+        : `<span class="fact">💧 ${c.totals.hydration < 0.5 && c.totals.hydEff > 0 ? `wirksam ${fmtPct(c.totals.hydEff)}` : `${fmtPct(c.totals.hydration)}${showEff(c) ? ` <small>· wirksam ${fmtPct(c.totals.hydEff)}</small>` : ''}`}</span>
       <span class="fact">${r.preferments?.length ? `🧱 ${pfLabel(r.preferments)}` : '⚡ direkt'}</span>
       ${c.lam.g > 0 ? `<span class="fact">🧈 ${fmtPct(c.lam.pct)} Ziehfett</span>` : ''}`}
       ${r.steps?.length ? `<span class="fact">⏱ ${fmtDur(info.total)}</span>` : ''}
@@ -504,7 +508,7 @@ function amtTxt(it) {
   const hint = [pg && `≈ ${fmtG(v * pg)}${pg >= 30 ? ' (verquirlt abwiegen)' : ''}`, Math.abs(rounded - v) > 0.04 && `genau ${fmtNum(v, 2)}`].filter(Boolean).join(' · ');
   return { txt: `${t} ${it.unit === 'Pck' ? 'Pck.' : it.unit}`, hint };
 }
-const cakeRows = (p) => p.items.map((it) => { const a = amtTxt(it); return { name: it.name || 'Zutat', txt: a.txt, g: a.g, hint: a.hint }; });
+const cakeRows = (p) => p.items.map((it, k) => { const a = amtTxt(it); return { key: `i${k}`, type: 'cake', unit: it.unit, v: it.v, name: it.name || 'Zutat', txt: a.txt, g: a.g, hint: a.hint }; });
 function cakeBlocks(c) {
   const warn = c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '';
   if (!c.parts.length) return `${warn}<div class="empty small"><p>Noch keine Zutaten eingetragen.</p></div>`;
@@ -517,37 +521,48 @@ function ingTable(title, sub, rows, cls = '') {
   const total = rows.reduce((s, x) => s + (x.g || 0), 0);
   return `<section class="ing ${cls}" ${title ? `data-tk="${esc(title.replace(/<[^>]*>/g, ''))}"` : ''}>
     ${title ? `<h3>${title}${sub ? `<small>${sub}</small>` : ''}</h3>` : ''}
-    <table>${rows.map((x) => `<tr data-action="tick"><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${x.txt ?? fmtG(x.g)}</td></tr>`).join('')}
+    <table>${rows.map((x) => `<tr data-action="tick" ${x.chg ? 'class="chg"' : ''}><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${x.txt ?? fmtG(x.g)}</td></tr>`).join('')}
     ${allG ? `<tr class="sum"><td>Summe</td><td class="num">${fmtG(total)}</td></tr>` : ''}</table>
   </section>`;
 }
 
+// Zeilen tragen einen Schlüssel (key) und eine Art (type) – für „🎨 Anpassen“ und das Backprotokoll
+// Einlagen (Rosinen, Nüsse, Kandiertes …) erst zum Schluss unterarbeiten – nur Hinweis + am Ende der Liste
+const LATE = /rosine|sultanine|korinthe|orangeat|zitronat|kandiert|nüsse|nuss|mandel|schoko(drops|stück|tropfen)|cranberr|olive|röstzwiebel|speckwürfel|feige|dattel|aprikose|trockenobst/i;
 function pfRows(x, yt) {
   const rows = [];
-  if (x.starter > 0) rows.push({ name: x.pf.type === 'madre' ? 'Lievito Madre (aufgefrischt)' : 'Anstellgut', hint: `${fmtNum(x.pf.starterHydration ?? 100, 0)} % Hydration`, g: x.starter });
-  rows.push({ name: x.flourName || 'Mehl', g: x.freshFlour });
-  rows.push({ name: 'Wasser', g: x.freshWater });
-  if (x.yeast > 0) rows.push({ name: yeastName(yt), g: x.yeast });
+  const src = x.chained ? x.src : '';
+  if (x.starter > 0) rows.push({ key: 'starter', type: src ? 'fixed' : 'starter', name: src ? 'Vorige Stufe (komplett)' : x.pf.type === 'madre' ? 'Lievito Madre (aufgefrischt)' : 'Anstellgut', hint: src ? '' : `${fmtNum(x.pf.starterHydration ?? 100, 0)} % Hydration`, g: x.starter });
+  rows.push({ key: 'flour', type: x.seeds ? 'seeds' : 'flour', name: x.seeds ? (x.flourName || 'Saaten') : (x.flourName || 'Mehl'), hint: x.seeds ? 'zählt nicht zum Mehl' : '', g: x.freshFlour });
+  // Wasser / Milch / gemischt – nur echtes Wasser ist „water“ (für Hydration, Ziel-Hydration, +10 g Wasser)
+  const mix = x.milk && x.milkG < x.freshWater - 0.05;
+  rows.push({ key: 'water', type: x.seeds ? 'soak' : x.milk ? 'milk' : 'water', name: x.seeds ? 'Quellwasser' : mix ? 'Wasser + Milch' : x.milk ? 'Milch' : 'Wasser',
+    hint: mix ? `davon ${fmtG(x.milkG)} Milch` : '', g: x.freshWater });
+  if (x.yeast > 0) rows.push({ key: 'yeast', type: 'yeast', name: yeastName(yt), g: x.yeast });
+  if (x.salt > 0) rows.push({ key: 'salt', type: 'salt', name: 'Salz', g: x.salt });
+  (x.extras || []).forEach((e, k) => rows.push({ key: `x${k}`, type: 'fixed', name: e.name || 'Zutat', g: e.g }));
   return rows;
 }
 function mainRows(c, yt) {
   const rows = [];
-  c.pfs.forEach((x) => rows.push({ name: x.pf.name || 'Vorteig', hint: 'kompletter Vorteig', g: x.total }));
-  c.main.flours.forEach((f) => { if (f.g > 0.05) rows.push({ name: f.name, g: f.g }); });
+  // Nur Vorteige, die in den Hauptteig kommen (eine Stufe, die in der nächsten steckt, nicht doppelt)
+  c.pfs.filter((x) => !x.consumed).forEach((x) => rows.push({ key: `pf:${x.id}`, type: 'fixed', name: x.pf.name || 'Vorteig', hint: 'kompletter Vorteig', g: x.total }));
+  c.main.flours.forEach((f, k) => { if (f.g > 0.05 || f._key) rows.push({ key: f._key || `f${k}`, type: 'flour', name: f.name, g: f.g }); });
   const w = Math.max(0, c.main.water), ice = Math.min(w, num(c.main.ice));
   const wt = c.main.waterTemp;
-  rows.push({ name: wt !== undefined && wt !== '' ? `Wasser (${fmtNum(wt)} °C)` : 'Wasser', g: w - ice });
-  if (ice > 0) rows.push({ name: 'Eis', hint: 'ersetzt einen Teil des Wassers', g: ice });
-  if (c.main.salt > 0) rows.push({ name: 'Salz', g: c.main.salt });
-  if (c.main.yeast > 0) rows.push({ name: yeastName(yt), g: c.main.yeast });
-  if (c.main.oil > 0) rows.push({ name: 'Öl', g: c.main.oil });
-  c.main.extras.forEach((e) => { if (e.g > 0) rows.push({ name: e.name || 'Zutat', g: e.g }); });
-  return rows;
+  rows.push({ key: 'water', type: 'water', name: wt !== undefined && wt !== '' ? `Wasser (${fmtNum(wt)} °C)` : 'Wasser', g: w - ice });
+  if (ice > 0) rows.push({ key: 'ice', type: 'water', name: 'Eis', hint: 'ersetzt einen Teil des Wassers', g: ice });
+  if (c.main.salt > 0) rows.push({ key: 'salt', type: 'salt', name: 'Salz', g: c.main.salt });
+  if (c.main.yeast > 0) rows.push({ key: 'yeast', type: 'yeast', name: yeastName(yt), g: c.main.yeast });
+  if (c.main.oil > 0) rows.push({ key: 'oil', type: 'oil', name: 'Öl', g: c.main.oil });
+  const late = [];
+  c.main.extras.forEach((e, j) => { if (e.g > 0) (LATE.test(e.name || '') ? late : rows).push({ key: `x${j}`, type: 'extra', name: e.name || 'Zutat', g: e.g, hint: LATE.test(e.name || '') ? 'zum Schluss unterarbeiten' : '' }); });
+  return [...rows, ...late];
 }
 // Ziehfett: dazu die ungefähre Größe der Butterplatte (1 cm dick, Butter ≈ 0,91 g/cm³)
 function lamRows(c) {
   const side = Math.sqrt(c.lam.g / 0.91);
-  return [{ name: c.lam.name, hint: `Platte ca. ${fmtNum(side, 0)} × ${fmtNum(side, 0)} cm, 1 cm dick`, g: c.lam.g }];
+  return [{ key: 'lam', type: 'lam', name: c.lam.name, hint: `Platte ca. ${fmtNum(side, 0)} × ${fmtNum(side, 0)} cm, 1 cm dick`, g: c.lam.g }];
 }
 function stageRows(c, stage, yt) {
   if (c.kind === 'cake') { const p = c.parts.find((x) => x.id === stage); return p ? { title: p.name || 'Zutaten', rows: cakeRows(p) } : null; }
@@ -573,8 +588,9 @@ function ingredientBlocks(c, yt, withTotals) {
       t.oil > 0 && ['Öl', t.oil, (t.oil / t.flour) * 100],
       ['Salz', t.salt, (t.salt / t.flour) * 100],
       t.yeast > 0 && [yeastName(yt), t.yeast, (t.yeast / t.flour) * 100, yeastEq],
-      ...c.main.extras.filter((e) => e.g > 0).map((e) => [e.name || 'Zutat', e.g, e.pct]),
+      ...c.main.extras.filter((e) => (e.total ?? e.g) > 0).map((e) => [e.name || 'Zutat', e.total ?? e.g, e.pct]),
       c.lam?.g > 0 && [`${c.lam.name} (Ziehfett)`, c.lam.g, c.lam.pct],
+      ...c.pfs.filter((x) => x.seeds).map((x) => [`${x.flourName} (Quellstück, kein Mehl)`, x.flour, x.pf.flourPct]),
     ].filter(Boolean);
     totals = `<details class="card totals"><summary>Σ Gesamtrezept <small class="muted">Bäckerprozente · ${fmtG(t.dough)}</small></summary>
       <section class="ing"><table>${rows.map(([n, g, pc, h]) => `<tr><td>${esc(n)}${h ? `<small>${esc(h)}</small>` : ''}</td><td class="num">${fmtG(g)}</td><td class="num pct">${fmtPct(pc)}</td></tr>`).join('')}
@@ -615,6 +631,7 @@ function recipeFlow(r, info) {
   <section class="card">
     <div class="flow-sum"><div><small>Gesamt</small><b>${fmtDur(info.total)}</b></div><div><small>Backen nach</small><b>${fmtDur(info.bakeOff)}</b></div></div>
     <div class="flowbar">${info.tl.filter((s) => !s.parallel).map((s) => `<i class="loc-${s.location}" style="flex:${Math.max(num(s.durationMin), 1)}" title="${esc(s.name)}"></i>`).join('')}</div>
+    ${flowLane(info)}
     <div class="legend">
       ${loc.rt ? `<span><i class="loc-rt"></i>Raum ${fmtDur(loc.rt)}</span>` : ''}
       ${loc.fridge ? `<span><i class="loc-fridge"></i>Kühlschrank ${fmtDur(loc.fridge)}</span>` : ''}
@@ -633,26 +650,35 @@ function stepRow(s, when, r, extra = '', tail = '') {
   const details = [
     s.temp && `🌡️ ${esc(s.temp)}`,
     stageName && `Zutaten: ${esc(stageName)}`,
-    s.parallel && '⇉ läuft parallel zum vorherigen Schritt',
+    s.parallel && (s.align === 'end' ? '⇉ läuft nebenher – zusammen fertig mit dem vorherigen Schritt' : '⇉ läuft nebenher – startet zusammen mit dem vorherigen Schritt'),
     s.repeat?.count && `🔁 ${s.repeat.count}× alle ${s.repeat.intervalMin} min`,
     s.meas && measLabel(s.meas) && `Gemessen: ${measLabel(s.meas)}`,
     s._comp && `<span class="comp">Temperatur-Ausgleich: ${fmtDur(s._comp.from)} → ${fmtDur(s.durationMin)} bei ${fmtNum(s._comp.actual)} °C</span>`,
     s._adj && `🪄 Nachtruhe: ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`,
   ].filter(Boolean);
   const more = details.length || s.notes;
+  // Nebenher-Schritte: eingerückt unter dem Hauptschritt, mit Uhrzeit von–bis (sofern bekannt)
+  const par = s.parallel ? `<span class="par-tag">nebenher${s.end !== undefined && s.start > 1e11 ? ` bis ${fmtTime(s.end)}` : ''}</span> · ` : '';
   const head = `<div class="tl-h"><b>${esc(s.name || k.label)}</b><span class="tl-when">${when}</span></div>
-    <div class="tl-m"><span class="loc-chip loc-${s.location}">${l.icon} ${l.short}</span> ${fmtDur(s.durationMin)}${s._comp ? ' 🌡️' : ''}${s._adj ? ' 🪄' : ''}${s.repeat?.count ? ` · 🔁 ${s.repeat.count}×` : ''}${more ? ' · <span class="tl-more">mehr</span>' : ''}</div>`;
+    <div class="tl-m">${par}<span class="loc-chip loc-${s.location}">${l.icon} ${l.short}</span> ${fmtDur(s.durationMin)}${s._comp ? ' 🌡️' : ''}${s._adj ? ' 🪄' : ''}${s.repeat?.count ? ` · 🔁 ${s.repeat.count}×` : ''}${more ? ' · <span class="tl-more">mehr</span>' : ''}</div>`;
   const body = more
     ? `<details><summary>${head}</summary>${details.length ? `<div class="tl-m">${details.join('<br>')}</div>` : ''}${s.notes ? `<div class="tl-n">${esc(s.notes)}</div>` : ''}</details>`
     : head;
-  return `<li class="tl-i loc-${s.location} ${extra}"><div class="tl-dot">${k.icon}</div><div class="tl-c">${body}</div>${tail}</li>`;
+  return `<li class="tl-i loc-${s.location} ${s.parallel ? 'par' : ''} ${extra}"><div class="tl-dot">${k.icon}</div><div class="tl-c">${body}</div>${tail}</li>`;
+}
+// Zweite Spur unter der Zeitleiste: zeigt, wann Nebenher-Schritte laufen
+function flowLane(info) {
+  const par = info.tl.filter((s) => s.parallel);
+  const total = (info.endAt - info.startAt) || 1;
+  if (!par.length) return '';
+  return `<div class="flowbar2" aria-hidden="true">${par.map((s) => `<i class="loc-${s.location}" style="left:${((s.start - info.startAt) / total) * 100}%;width:${Math.max(1.5, ((s.end - s.start) / total) * 100)}%" title="${esc(s.name)}"></i>`).join('')}</div>`;
 }
 
 function recipeLog(r, logs) {
   const withHyd = logs.filter((l) => l.rating > 0 && num(l.params?.hydration) > 0);
   const best = logs.filter((l) => l.rating > 0).sort((a, b) => b.rating - a.rating)[0];
   return `
-  <a class="btn block" href="#/log/${r.id}/new">${icon('plus')} Neuer Eintrag</a>
+  <div class="row gap"><a class="btn grow" href="#/log/${r.id}/new">${icon('plus')} Neuer Eintrag</a>${logs.length >= 2 ? `<a class="btn" href="#/cmp/${r.id}">⇄ Vergleichen</a>` : ''}</div>
   ${best && logs.length > 1 ? `<details class="card"><summary>🏆 Bestes Ergebnis <small class="muted">${fmtDate(best.date)}${num(best.params?.hydration) > 0 ? ` · ${fmtPct(best.params.hydration)}` : ''}</small></summary>
     <div class="pchips">${paramChips(best.params)}</div>
     ${withHyd.length >= 2 ? hydChart(withHyd) : ''}</details>` : ''}
@@ -684,12 +710,14 @@ function logCard(l, r) {
     <div class="pchips">${paramChips(l.params)}</div>
     ${subTxt ? `<div class="muted small">${subTxt}</div>` : ''}
     ${cond ? `<div class="muted small">🌡️ ${cond}</div>` : ''}
+    ${l.protocol ? `<div class="muted small">⏱ ${protoSum(l.protocol) || 'Ablauf gespeichert'} · <a href="#/log/${r.id}/${l.id}">Details</a></div>` : ''}
     ${l.notes ? `<p class="pre">${esc(l.notes)}</p>` : ''}
     ${l.nextTime ? `<p class="next">➡️ <b>Nächstes Mal:</b> ${esc(l.nextTime)}</p>` : ''}
     ${(l.photos || []).length ? `<div class="thumbs">${l.photos.map((p) => `<button class="ph thumb" data-action="viewPhoto" data-id="${p}"><img data-photo="${p}" alt=""></button>`).join('')}</div>` : ''}
     <div class="act-row">
       <button class="btn sm" data-action="bakeAgain" data-id="${l.id}">${icon('play')} So nochmal backen</button>
-      ${isCake(r) ? '' : `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button>`}
+      ${l.protocol?.pct ? `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button><button class="btn sm ghost" data-action="logVariant" data-id="${l.id}">Als Variante</button>`
+        : isCake(r) ? '' : `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button>`}
       <a class="icon-btn" href="#/log/${r.id}/${l.id}" aria-label="Bearbeiten">${icon('edit')}</a>
     </div>
   </details>`;
@@ -837,18 +865,36 @@ function gramDef(key) {
   const d = S.draft, [a, b, c2] = key.split('.');
   if (a === 'salt') return { get: (c) => c.totals.salt, pct: () => num(d.salt), set: (v) => { d.salt = v; } };
   if (a === 'yeast') return { get: (c) => c.main.yeast, pct: () => num(d.yeastPct), set: (v) => { d.yeastPct = v; } };
-  if (a === 'ex') { const e = d.extras[+b]; return { get: (c) => c.main.extras[+b]?.g || 0, pct: () => num(e?.pct), set: (v) => { e.pct = v; } }; }
+  // Zutaten-Liste = Gesamtmenge im Rezept (inkl. Milch im Vorteig)
+  if (a === 'ex') { const e = d.extras[+b]; return { get: (c) => c.main.extras[+b]?.total ?? c.main.extras[+b]?.g ?? 0, pct: () => num(e?.pct), set: (v) => { e.pct = v; } }; }
   if (a === 'lam') return { get: (c) => c.lam?.g || 0, pct: () => num(d.lamination?.pct), set: (v) => { d.lamination = { ...(d.lamination || {}), pct: Math.max(0, v) }; } };
+  if (a === 'pf' && c2 === 'x') {
+    // Zutat im Vorteig (% vom Gesamtmehl)
+    const k = +key.split('.')[3], e = d.preferments[+b]?.extras?.[k];
+    return { get: (c) => c.pfs[+b]?.extras?.find((x) => C.sameName(x.name, e?.name))?.g || 0, pct: () => num(e?.pct), set: (v) => { if (e) e.pct = Math.max(0, v); } };
+  }
   if (a === 'pf') {
     const pf = d.preferments[+b];
     // Gramm-Felder zeigen die FRISCH zugegebenen Mengen (wie im Rezepttext) – ohne Mehl/Wasser im Anstellgut
-    const [g, p] = { flour: ['freshFlour', 'flourPct'], water: ['freshWater', 'hydration'], yeast: ['yeast', 'yeastPct'], starter: ['starter', 'starterPct'] }[c2];
+    const [g, p] = { flour: ['freshFlour', 'flourPct'], water: ['freshWater', 'hydration'], yeast: ['yeast', 'yeastPct'], starter: ['starter', 'starterPct'], salt: ['salt', 'saltPct'] }[c2];
     return { get: (c) => c.pfs[+b]?.[g] || 0, pct: () => num(pf?.[p]), set: (v) => { pf[p] = v; } };
   }
   return null;
 }
 // Prozentwert so lange anpassen, bis die gewünschte Grammzahl herauskommt (konvergiert in wenigen Schritten)
 function solveGram(key, target) {
+  if (/^pf\.\d+\.salt$/.test(key)) {
+    // Salz im Vorteig: % vom Vorteig-Mehl
+    const i = +key.split('.')[1], x = calc(S.draft).pfs[i];
+    if (x) S.draft.preferments[i].saltPct = x.flour > 0 ? Math.round((Math.max(0, target) / x.flour) * 10000) / 100 : 0;
+    return;
+  }
+  if (/^pf\.\d+\.x\.\d+$/.test(key)) {
+    // Zutat im Vorteig: % vom Gesamtmehl (ändert die Mehlmenge nicht)
+    const F = calc(S.draft).F;
+    gramDef(key)?.set(F > 0 ? Math.round((Math.max(0, target) / F) * 1e6) / 1e4 : 0);
+    return;
+  }
   if (key.startsWith('pf.')) { const [, i, f] = key.split('.'); solvePf(+i, f, target); return; }
   const g = gramDef(key);
   if (!g) return;
@@ -875,9 +921,12 @@ function solvePf(i, field, target) {
   const v = { flour: x.freshFlour, water: x.freshWater, starter: x.starter, yeast: x.yeast };
   v[field] = Math.max(0, num(target));
   const sh = num(pf.starterHydration ?? 100) / 100;
-  const sFlour = v.starter / (1 + sh), sWater = v.starter - sFlour;
+  // Mehrstufig: Mehl/Wasser der vorigen Stufe stehen fest
+  const chained = x.chained;
+  const sFlour = chained ? x.flour - x.freshFlour : v.starter / (1 + sh), sWater = chained ? x.water - x.freshWater : v.starter - sFlour;
+  if (chained) v.starter = 0;
   // Nur Anstellgut ohne frisches Mehl: das reife Anstellgut selbst ist der Vorteig
-  const onlyStarter = v.starter > 0 && v.flour <= 0;
+  const onlyStarter = !chained && v.starter > 0 && v.flour <= 0;
   const flour = onlyStarter ? sFlour : v.flour + sFlour, water = onlyStarter ? sWater : v.water + sWater;
   const r = (n, dec = 4) => Math.round(n * 10 ** dec) / 10 ** dec;
   for (let k = 0; k < 8; k++) {
@@ -893,7 +942,7 @@ function solvePf(i, field, target) {
 function amt(key, label, pctHint = '') {
   const input = gramMode()
     ? `<input class="in" inputmode="decimal" data-input="gram" data-gram="${key}">`
-    : `<input class="in" inputmode="decimal" data-input="pctamt" data-gram="${key}" value="${fmtIn(gramDef(key)?.pct() ?? 0, 3)}">`;
+    : `<input class="in" inputmode="decimal" data-input="pctamt" data-gram="${key}" value="${fmtIn(gramDef(key)?.pct() ?? 0, num(gramDef(key)?.pct()) < 1 ? 3 : 2)}">`;
   return fldU(label, input, gramMode() ? 'g' : '%', `<span data-live="amt-${key}"></span>${!gramMode() && pctHint ? ` · ${pctHint}` : ''}`);
 }
 const unitSeg = () => `<div class="unit-seg"><span class="muted small">Mengen eingeben in</span>
@@ -1009,20 +1058,38 @@ function wVorteig(d) {
   ${pfs.map((pf, i) => {
     const t = PF_TYPES[pf.type] || PF_TYPES.custom;
     const sour = pf.type === 'levain' || pf.type === 'madre';
-    const showYeast = !sour || num(pf.yeastPct) > 0;
+    const starch = ['tangzhong', 'yudane', 'quell'].includes(pf.type);
+    const showYeast = (!sour && !starch) || num(pf.yeastPct) > 0;
     const showStarter = sour || pf.type === 'custom';
+    const liq = pf.liquid === 'milk' ? 'Milch' : pf.liquid === 'mix' ? 'Wasser + Milch' : 'Wasser';
+    const seeds = pf.type === 'quell' && pf.seeds;
+    const chained = !!pf.starterFrom;
+    // Zutaten, die schon in diesen Vorteig kommen (aus der Zutaten-Liste des Rezepts)
+    const exNames = (d.extras || []).map((e) => e.name).filter((n) => n && !(pf.extras || []).some((x) => C.sameName(x.name, n)));
     return `<section class="card pf-card">
       <div class="row gap"><span class="pf-ic">${t.icon}</span><input class="in grow strong" data-bind="d.preferments.${i}.name" value="${esc(pf.name)}"><button class="icon-btn" data-action="delPf" data-i="${i}" aria-label="Vorteig entfernen">${icon('trash')}</button></div>
-      <div class="seg small">${Object.entries(PF_TYPES).map(([k, v]) => `<button class="${pf.type === k ? 'on' : ''}" data-action="pfType" data-i="${i}" data-v="${k}">${v.label}</button>`).join('')}</div>
+      <details class="fold pf-types" ${pf.type ? '' : 'open'}><summary>Art: <b>${esc(t.label)}</b> <small class="muted">ändern</small></summary>
+        <div class="seg small">${Object.entries(PF_TYPES).map(([k, v]) => `<button class="${pf.type === k ? 'on' : ''}" data-action="pfType" data-i="${i}" data-v="${k}">${v.icon} ${v.label}</button>`).join('')}</div>
+      </details>
       <details class="info"><summary>ⓘ Typische Werte</summary><p>${t.info}</p></details>
+      ${i > 0 && ['levain', 'madre', 'custom'].includes(pf.type) ? fld('Anstellgut', `<select class="in" data-change="pfFrom" data-i="${i}">${[`<option value="">Eigenes Anstellgut (Menge unten)</option>`, ...pfs.slice(0, i).filter((p) => !pfs.some((q, j) => j !== i && q.starterFrom === p.id)).map((p) => `<option value="${p.id}" ${pf.starterFrom === p.id ? 'selected' : ''}>Ganze Stufe „${esc(p.name)}“</option>`)].join('')}</select>`, 'Mehrstufiger Sauerteig: die vorige Stufe komplett als Anstellgut') : ''}
+      ${C.PF_LIQUID.has(pf.type) || pf.liquid !== 'water' && pf.liquid ? `<div class="seg small">${[['water', '💧 Wasser'], ['milk', '🥛 Milch'], ['mix', '💧+🥛 Gemischt']].map(([k, l]) => `<button class="${(pf.liquid || 'water') === k ? 'on' : ''}" data-action="pfLiquid" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
+        ${pf.liquid === 'mix' ? fldU('Davon Milch', numIn(`preferments.${i}.milkShare`, pf.milkShare ?? 50), '%', 'Anteil an der frisch zugegebenen Flüssigkeit') : ''}` : ''}
+      ${pf.type === 'quell' ? `<label class="check"><input type="checkbox" data-action="pfSeeds" data-i="${i}" ${pf.seeds ? 'checked' : ''}> Aus Saaten <small class="muted">(zählen nicht zum Mehl, kommen zusätzlich in den Teig)</small></label>` : ''}
       <div class="grid2">
-        ${amt(`pf.${i}.flour`, gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', 'vom Gesamtmehl')}
-        ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? 'Wasser (frisch)' : 'Wasser') : 'Hydration')}
+        ${amt(`pf.${i}.flour`, seeds ? (gramMode() ? 'Saaten' : 'Saaten-Anteil') : gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', seeds ? 'vom Mehl' : 'vom Gesamtmehl')}
+        ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? `${liq} (frisch)` : liq) : pf.liquid === 'milk' ? 'Milch-Anteil' : pf.liquid === 'mix' ? 'Flüssigkeit' : 'Hydration')}
         ${showYeast ? amt(`pf.${i}.yeast`, `${yeastName(d.yeastType)}`, 'vom Vorteigmehl') : ''}
-        ${showStarter ? amt(`pf.${i}.starter`, pf.type === 'madre' ? 'Madre (Anstellgut)' : 'Anstellgut', 'vom frischen Mehl') : ''}
-        ${showStarter ? fldU(pf.type === 'madre' ? 'Hydration Madre' : 'Hydration Anstellgut', numIn(`preferments.${i}.starterHydration`, pf.starterHydration ?? 100), '%') : ''}
-        ${flourNames.length > 1 ? fld('Mehlsorte', `<select class="in" data-bind="d.preferments.${i}.flourName">${flourNames.map((n) => `<option ${pf.flourName === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`) : ''}
+        ${C.PF_SALT.has(pf.type) || num(pf.saltPct) > 0 ? amt(`pf.${i}.salt`, 'Salz', 'vom Vorteigmehl') : ''}
+        ${showStarter && !chained ? amt(`pf.${i}.starter`, pf.type === 'madre' ? 'Madre (Anstellgut)' : 'Anstellgut', 'vom frischen Mehl') : ''}
+        ${showStarter && !chained ? fldU(pf.type === 'madre' ? 'Hydration Madre' : 'Hydration Anstellgut', numIn(`preferments.${i}.starterHydration`, pf.starterHydration ?? 100), '%') : ''}
+        ${(pf.extras || []).map((e, k) => amt(`pf.${i}.x.${k}`, `${esc(e.name)} <button class="link-x" data-action="pfExDel" data-i="${i}" data-k="${k}" aria-label="${esc(e.name)} aus dem Vorteig entfernen">✕</button>`, 'vom Gesamtmehl')).join('')}
+        ${seeds ? fld('Saaten', txtIn(`preferments.${i}.flourName`, pf.flourName, 'z. B. Leinsamen, Sonnenblumenkerne'))
+          : flourNames.length > 1 ? fld('Mehlsorte', `<select class="in" data-bind="d.preferments.${i}.flourName">${flourNames.map((n) => `<option ${pf.flourName === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`) : ''}
       </div>
+      ${exNames.length ? `<details class="addmore"><summary><span class="btn sm ghost">${icon('plus')} Zutat in diesen Vorteig</span></summary>
+        <div class="chips">${exNames.map((n) => `<button class="chip" data-action="pfExAdd" data-i="${i}" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+        <p class="muted small">Zum Beispiel Zucker, Butter oder Eigelb im ersten Panettone-Teig. Die Menge wird vom Hauptteig abgezogen – unter „Salz, Hefe &amp; Co.“ steht weiterhin die Gesamtmenge.</p></details>` : ''}
       <div class="pf-out" data-live="pf-${i}"></div>
     </section>`;
   }).join('')}
@@ -1114,6 +1181,31 @@ function wCakeIng(d) {
   </details>`;
 }
 
+// Parallele Schritte: Danach · Zusammen starten · Zusammen fertig
+const whenOf = (s) => (!s.parallel ? 'seq' : s.align === 'end' ? 'end' : 'start');
+function whenText(d, i) {
+  const s = d.steps[i], p = d.steps[i - 1];
+  if (!s || !p) return '';
+  const pn = `„${esc(p.name || kindOf(p.kind).label)}“`;
+  if (!s.parallel) return `Startet, wenn ${pn} fertig ist.`;
+  if (s.align !== 'end') return `Startet gleichzeitig mit ${pn} und läuft nebenher.`;
+  const diff = num(p.durationMin) - num(s.durationMin);
+  return diff > 0 ? `Startet ${fmtDur(diff)} nach Beginn von ${pn} – beide sind gleichzeitig fertig.`
+    : diff < 0 ? `Startet schon ${fmtDur(-diff)} vor ${pn} – beide sind gleichzeitig fertig.`
+      : `Läuft genau gleichzeitig mit ${pn}.`;
+}
+// Gärschritte, nach denen „Vorheizen“ sinnvoll nebenher läuft
+const FERMENT_KINDS = ['bulk', 'proof', 'rest', 'temper', 'fold'];
+// Einmaliger Tipp: Vorheizen läuft nacheinander nach einer Gare → nebenher laufen lassen?
+function preheatTip(d) {
+  if ((S.settings.preheatTipOff || []).includes(d.id)) return '';
+  const i = (d.steps || []).findIndex((s, k) => k > 0 && s.kind === 'preheat' && !s.parallel && FERMENT_KINDS.includes(d.steps[k - 1].kind));
+  if (i < 0) return '';
+  const s = d.steps[i], p = d.steps[i - 1];
+  return `<div class="hint-card"><div>♨️ <b>„${esc(s.name)}“ nebenher laufen lassen?</b><br><small>Der Ofen ist dann genau zum Ende von „${esc(p.name)}“ heiß – spart ${fmtDur(Math.min(num(s.durationMin), num(p.durationMin)))}.</small></div>
+    <div class="row gap"><button class="btn sm primary" data-action="preheatTip" data-i="${i}">Ja</button><button class="icon-btn x-btn" data-action="preheatTipOff" aria-label="Nicht mehr fragen">${icon('x')}</button></div></div>`;
+}
+
 function wAblauf(d) {
   const steps = d.steps || [];
   const pfs = d.preferments || [];
@@ -1128,14 +1220,14 @@ function wAblauf(d) {
     <div><small>Gesamtdauer</small><b data-live="total"></b></div>
     <div><small>Backen nach</small><b data-live="bakeOff"></b></div>
   </div>
-  ${steps.length ? '' : `<div class="empty small"><p>Noch keine Schritte – lass dir einen passenden Ablauf vorschlagen.</p><button class="btn primary" data-action="suggestSteps">✨ Ablauf vorschlagen</button></div>`}
+  ${steps.length ? preheatTip(d) : `<div class="empty small"><p>Noch keine Schritte – lass dir einen passenden Ablauf vorschlagen.</p><button class="btn primary" data-action="suggestSteps">✨ Ablauf vorschlagen</button></div>`}
   <ol class="steps-edit">${steps.map((s, i) => {
     const k = kindOf(s.kind), open = S.openStep === s.id;
     const hh = Math.floor(num(s.durationMin) / 60), mm = Math.round(num(s.durationMin) % 60);
     return `<li class="se ${open ? 'open' : ''} loc-${s.location}">
       <button class="se-h" data-action="toggleStep" data-id="${s.id}">
         <span class="se-n">${i + 1}</span><span class="se-ic">${k.icon}</span>
-        <span class="se-t"><b>${esc(s.name || k.label)}</b><small>${locOf(s.location).icon} ${locOf(s.location).short} · <span data-live="dur-${i}">${fmtDur(s.durationMin)}</span>${s.parallel ? ' · ⇉ parallel' : ''}${s.repeat?.count ? ` · ${s.repeat.count}×` : ''}</small></span>
+        <span class="se-t"><b>${esc(s.name || k.label)}</b><small>${locOf(s.location).icon} ${locOf(s.location).short} · <span data-live="dur-${i}">${num(s.durationMin) > 0 ? fmtDur(s.durationMin) : '⚠️ Dauer fehlt'}</span>${s.parallel ? ' · ⇉ nebenher' : ''}${s.repeat?.count ? ` · ${s.repeat.count}×` : ''}</small></span>
         ${icon(open ? 'up' : 'down')}
       </button>
       ${open ? `<div class="se-b">
@@ -1145,14 +1237,15 @@ function wAblauf(d) {
           ${fld('Dauer', `<div class="row gap dur"><span class="unit-in"><input class="in" inputmode="numeric" data-input="dur" data-i="${i}" data-part="h" value="${hh}"><span class="u">h</span></span><span class="unit-in"><input class="in" inputmode="numeric" data-input="dur" data-i="${i}" data-part="m" value="${mm}"><span class="u">min</span></span></div>`)}
         </div>
         <div class="fld"><span class="fld-l">Wo?</span><div class="seg small">${Object.entries(LOCATIONS).map(([kk, v]) => `<button class="${s.location === kk ? 'on' : ''}" data-action="stepLoc" data-i="${i}" data-v="${kk}">${v.icon} ${v.short}</button>`).join('')}</div></div>
+        ${i > 0 ? `<div class="fld"><span class="fld-l">Wann?</span><div class="seg small">${[['seq', 'Danach'], ['start', 'Zusammen starten'], ['end', 'Zusammen fertig']].map(([kk, l]) => `<button class="${whenOf(s) === kk ? 'on' : ''}" data-action="stepWhen" data-i="${i}" data-v="${kk}">${l}</button>`).join('')}</div>
+          <small class="fld-h" data-live="when-${i}">${whenText(d, i)}</small></div>` : ''}
         ${fld('Hinweise', `<textarea class="in" rows="2" data-bind="d.steps.${i}.notes" placeholder="Was ist zu tun?">${esc(s.notes)}</textarea>`)}
         <details class="fold" ${s.repeat || s.parallel ? 'open' : ''}>
-          <summary>Weitere Optionen <small class="muted">${[s.temp && esc(s.temp), s.stage && 'Zutaten', s.parallel && 'parallel', s.repeat && `${s.repeat.count}× Erinnerung`].filter(Boolean).join(' · ')}</small></summary>
+          <summary>Weitere Optionen <small class="muted">${[s.temp && esc(s.temp), s.stage && 'Zutaten', s.repeat && `${s.repeat.count}× Erinnerung`].filter(Boolean).join(' · ')}</small></summary>
           <div class="grid2">
             ${fld('Temperatur', `<input class="in" data-bind="d.steps.${i}.temp" value="${esc(s.temp)}" placeholder="z. B. 24–26 °C">`, feat('tempComp') && ['bulk', 'rest', 'proof', 'fold'].includes(s.kind) && s.location !== 'fridge' ? 'Basis für den Temperatur-Ausgleich' : '')}
             ${fld('Zutaten zeigen', `<select class="in" data-bind="d.steps.${i}.stage"><option value="">–</option>${stageOpts.map(([v, l]) => `<option value="${esc(v)}" ${s.stage === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`, 'beim Backen in diesem Schritt')}
           </div>
-          ${i > 0 ? `<label class="check"><input type="checkbox" data-bind="d.steps.${i}.parallel" ${s.parallel ? 'checked' : ''}> Parallel zum vorherigen Schritt</label>` : ''}
           <label class="check"><input type="checkbox" data-action="toggleRepeat" data-i="${i}" ${s.repeat ? 'checked' : ''}> Wiederkehrende Erinnerung <small class="muted">(Dehnen &amp; Falten)</small></label>
           ${s.repeat ? `<div class="grid2">${fldU('Wie oft', `<input class="in" inputmode="numeric" data-bind="d.steps.${i}.repeat.count" data-num value="${s.repeat.count}">`, '×')}${fldU('Abstand', `<input class="in" inputmode="numeric" data-bind="d.steps.${i}.repeat.intervalMin" data-num value="${s.repeat.intervalMin}">`, 'min')}</div>` : ''}
         </details>
@@ -1207,8 +1300,8 @@ function liveDraft() {
     const c = C.calcCake(d), info = planInfo(d.steps, 0);
     const L = { summary: liveSummary(c, d), total: d.steps?.length ? fmtDur(info.total) : '–', bakeOff: d.steps?.length ? fmtDur(info.bakeOff) : '–' };
     c.parts.forEach((p, i) => { L[`part-${i}`] = p.items.length ? `${p.items.length} Zutaten${p.g > 0 ? ` · ≈ ${fmtG(p.g)}` : ''}` : ''; });
-    (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = fmtDur(s.durationMin); });
-    $$('[data-live]').forEach((el) => { const k = el.dataset.live; if (k in L) { if (el.hasAttribute('data-html')) el.innerHTML = L[k]; else el.textContent = L[k]; } });
+    (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = fmtDur(s.durationMin); if (i > 0) L[`when-${i}`] = whenText(d, i); });
+    $$('[data-live]').forEach((el) => { const k = el.dataset.live; if (k in L) { if (el.hasAttribute('data-html') || k.startsWith('when-')) el.innerHTML = L[k]; else el.textContent = L[k]; } });
     return;
   }
   const c = calc(d);
@@ -1227,14 +1320,15 @@ function liveDraft() {
     warnings: c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '',
   };
   c.pfs.forEach((x, i) => {
-    L[`pf-${i}`] = `${x.starter > 0 ? `${fmtG(x.starter)} ${x.pf.type === 'madre' ? 'Madre' : 'Anstellgut'} + ` : ''}${fmtG(x.freshFlour)} Mehl + ${fmtG(x.freshWater)} Wasser${x.yeast > 0 ? ` + ${fmtG(x.yeast)} Hefe` : ''} = <b>${fmtG(x.total)}</b>`;
+    const liq = !x.milk ? `${fmtG(x.freshWater)} Wasser` : x.milkG < x.freshWater - 0.05 ? `${fmtG(x.freshWater - x.milkG)} Wasser + ${fmtG(x.milkG)} Milch` : `${fmtG(x.freshWater)} Milch`;
+    L[`pf-${i}`] = `${x.starter > 0 ? `${fmtG(x.starter)} ${x.chained ? 'vorige Stufe' : x.pf.type === 'madre' ? 'Madre' : 'Anstellgut'} + ` : ''}${fmtG(x.freshFlour)} ${x.seeds ? 'Saaten' : 'Mehl'} + ${liq}${x.yeast > 0 ? ` + ${fmtG(x.yeast)} Hefe` : ''}${x.salt > 0 ? ` + ${fmtG(x.salt)} Salz` : ''}${(x.extras || []).map((e) => ` + ${fmtG(e.g)} ${esc(e.name)}`).join('')} = <b>${fmtG(x.total)}</b>`;
   });
   c.main.extras.forEach((e, i) => { L[`ex-${i}`] = fmtG(e.g); });
-  (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = fmtDur(s.durationMin); });
+  (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = num(s.durationMin) > 0 ? fmtDur(s.durationMin) : '⚠️ Dauer fehlt'; if (i > 0) L[`when-${i}`] = whenText(d, i); });
   $$('[data-live]').forEach((el) => {
     const k = el.dataset.live;
     if (!(k in L)) return;
-    if (el.hasAttribute('data-html') || k.startsWith('pf-')) el.innerHTML = L[k]; else el.textContent = L[k];
+    if (el.hasAttribute('data-html') || k.startsWith('pf-') || k.startsWith('when-')) el.innerHTML = L[k]; else el.textContent = L[k];
   });
   $$('input[data-link]').forEach((el) => {
     if (el === document.activeElement) return;
@@ -1275,8 +1369,26 @@ function vPlan(id) {
   const night = info.tl.filter((s) => C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo));
   const hasAdj = Object.keys(P.adj || {}).length > 0;
   const cake = isCake(r);
-  const c = calcFor(r, planOv(r));
+  const c = calcFor(planRecipe(r), planOv(r));
   const cat = catOf(r.category);
+  // Hinweis: Beim letzten Backen wurde mit „🎨 Anpassen“ etwas geändert → für diesen Backtag übernehmen?
+  const lastLog = logsFor(id)[0], lp = lastLog?.protocol;
+  let lastHint = '';
+  // 🫙 Anstellgut aus „Meine Kulturen“ vorher auffrischen (nur bei Sauerteig/Madre im Rezept)
+  const usesStarter = !cake && (r.preferments || []).some((p) => num(p.starterPct) > 0 || ['levain', 'madre'].includes(p.type));
+  // Passende Kulturen: Madre-Rezept → Madre/LiCoLi, Sauerteig → Sauerteige; gibt es keine passende, alle zeigen
+  const madreR = (r.preferments || []).some((p) => p.type === 'madre');
+  const fits = (c) => (madreR ? ['madre', 'licoli'] : ['rye', 'wheat', 'spelt', 'licoli', 'custom']).includes(c.type);
+  const cultList = S.cultures.some(fits) ? S.cultures.filter(fits) : S.cultures;
+  const cultRow = feat('cultures') && usesStarter && S.cultures.length ? `<div class="hint-card small cult-plan"><div>🫙 Anstellgut vorher auffrischen?</div>
+    <select class="in" data-change="planCult" aria-label="Kultur auffrischen">${[`<option value="">Nein</option>`, ...cultList.map((c) => `<option value="${c.id}" ${P.cult === c.id ? 'selected' : ''}>${esc(c.name)} · ${fmtNum(c.lead)} h vorher</option>`)].join('')}</select></div>` : '';
+  if (lp?.pct && lp.changes?.length) {
+    const what = `${lp.changes.slice(0, 2).map((x) => `${esc(x.name)} ${esc(x.from)} → ${esc(x.to)}`).join(', ')}${lp.changes.length > 2 ? ` +${lp.changes.length - 2}` : ''}`;
+    const hyd = lp.hydration !== null && lp.baseHydration !== null && Math.abs(lp.hydration - lp.baseHydration) > 0.05 ? ` (Hydration ${fmtPct(lp.hydration)})` : '';
+    lastHint = P.usePct === lastLog.id
+      ? `<div class="hint-card good"><div>🎨 Mengen vom ${fmtDate(lastLog.date)} übernommen${hyd}</div><button class="btn sm ghost" data-action="planUsePctOff">Zurück</button></div>`
+      : `<div class="hint-card"><div>🎨 <b>Letztes Mal angepasst</b>${lastLog.rating ? ` ${stars(lastLog.rating)}` : ''}<br><small>${what}${hyd}</small></div><button class="btn sm primary" data-action="planUsePct" data-id="${lastLog.id}">Übernehmen</button></div>`;
+  }
   const qtyCard = cake ? `<section class="card scaler">
       <div class="card-h"><b>Menge für diesen Backtag</b>${C.panLabel(r.pan) ? `<small class="muted">Rezept: ${esc(C.panLabel(r.pan))}</small>` : ''}</div>
       ${cakeScaler(r, P.ov, 'plan')}
@@ -1301,6 +1413,8 @@ function vPlan(id) {
     ${night.length ? `<div class="hint-card warnc"><div>🌙 <b>${night.length} Schritt${night.length > 1 ? 'e' : ''} in der Nacht</b><br><small>${night.slice(0, 3).map((s) => `${new Intl.DateTimeFormat('de-DE', { weekday: 'short' }).format(s.start)} ${fmtTime(s.start)}`).join(' · ')}${night.length > 3 ? ' …' : ''}</small></div>
       ${feat('nightOpt') ? '<button class="btn sm primary" data-action="nightOpt">🪄 Anpassen</button>' : ''}</div>` : ''}
     ${hasAdj ? `<div class="hint-card good"><div>🪄 ${steps.filter((s) => s._adj).map((s) => `${esc(s.name)} ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`).join(' · ')}</div><button class="btn sm ghost" data-action="nightReset">Zurück</button></div>` : ''}
+    ${lastHint}
+    ${cultRow}
     ${cake ? qtyCard : `<section class="card scaler">
       <div class="card-h"><b>Menge für diesen Backtag</b></div>
       <div class="seg small" style="margin:0 0 10px">${[['pieces', cat.pieces], ['flour', 'Mehl']].map(([k, l]) => `<button class="${(P.ov.ymode === 'flour' ? 'flour' : 'pieces') === k ? 'on' : ''}" data-action="planYMode" data-v="${k}">${l}</button>`).join('')}</div>
@@ -1349,8 +1463,17 @@ function initPlan(r) {
 }
 
 // Schritte inkl. Anpassungen aus dem Nachtruhe-Optimierer (ohne Temperatur-Ausgleich)
+// … und – falls im Planer gewählt – „Anstellgut auffrischen“ aus „Meine Kulturen“ davor
 function planStepsBase(r, adj = S.plan?.adj || {}) {
-  return (r.steps || []).map((s) => (adj[s.id] ? { ...s, durationMin: num(s.durationMin) + adj[s.id], _adj: adj[s.id] } : s));
+  const steps = (r.steps || []).map((s) => (adj[s.id] ? { ...s, durationMin: num(s.durationMin) + adj[s.id], _adj: adj[s.id] } : s));
+  const c = S.plan?.cult && S.plan.id === r.id && cultById(S.plan.cult);
+  if (!c) return steps;
+  const [sa, fl, wa] = c.ratio || [1, 1, 1];
+  return [
+    C.step('prep', `${c.name} auffrischen`, 5, 'rt', { id: `cult-${c.id}`, cultureId: c.id, notes: c.type === 'yeastwater' ? 'Hefewasser nachfüttern.' : `Füttern ${fmtNum(sa, 2)} : ${fmtNum(fl, 2)} : ${fmtNum(wa, 2)} (Anstellgut : Mehl : Wasser) – Menge siehe Füttern-Rechner.` }),
+    C.step('rest', `${c.name} reifen lassen`, Math.max(30, Math.round(num(c.lead) * 60)), c.type === 'madre' ? 'warm' : 'rt', { id: `cultr-${c.id}`, notes: 'Bereit, wenn sie sich etwa verdoppelt hat.' }),
+    ...steps,
+  ];
 }
 // … plus Temperatur-Ausgleich, falls eine Raumtemperatur für den Backtag angegeben ist
 function planSteps(r, adj) {
@@ -1386,6 +1509,11 @@ function optimizeNight(r) {
   return best;
 }
 
+// Rezept für diesen Backtag – auf Wunsch mit den Mengen vom letzten Mal („🎨 Anpassen“), das Rezept selbst bleibt gleich
+function planRecipe(r) {
+  const l = S.plan?.usePct && S.logs.find((x) => x.id === S.plan.usePct);
+  return l?.protocol?.pct ? C.applyPct(structuredClone(r), l.protocol.pct) : r;
+}
 function planOv(r) {
   const o = S.plan.ov;
   if (isCake(r)) return cakeOv(o);
@@ -1400,6 +1528,12 @@ function planStart(r) {
 }
 
 // ---------- Backvorgang ----------
+// Nebenher-Schritte (parallel, ohne Zutaten – z. B. Ofen vorheizen) halten „Weiter“ nicht auf
+const MIX_LIKE = new Set(['prep', 'autolyse', 'mix', 'laminate']);
+const isSide = (x) => !!x?.parallel && !MIX_LIKE.has(x.kind) && !x.stage;
+const nextMain = (tl, i) => tl.find((x) => x.i > i && !x.doneAt && !isSide(x));
+const curStep = (tl) => tl.find((x) => !x.doneAt && !isSide(x)) || tl.find((x) => !x.doneAt);
+
 function sessionEvents(s, now) {
   const tl = C.timeline(s.recipeId ? effSteps(s) : s.steps, s.startAt, now);
   const ev = [];
@@ -1407,13 +1541,19 @@ function sessionEvents(s, now) {
   tl.forEach((st, i) => {
     if (st.doneAt) return;
     if (i === 0 && !(s.createdAt && st.start <= s.createdAt + 60000)) ev.push({ key: `${s.id}:s0:${m(st.start)}`, at: st.start, title: `Los geht's: ${st.name}`, body: s.recipeName });
+    if (isSide(st)) {
+      const main = tl.slice(0, i).reverse().find((x) => !isSide(x));
+      if (i > 0 && !(s.createdAt && st.start <= s.createdAt + 60000)) ev.push({ key: `${s.id}:p${i}:${m(st.start)}`, at: st.start, title: `⇉ Jetzt nebenher: ${st.name}`, body: `${main ? `„${main.name}“ läuft weiter · ` : ''}${s.recipeName}` });
+      ev.push({ key: `${s.id}:pe${i}:${m(st.end)}`, at: st.end, title: `✓ ${st.name} – fertig`, body: s.recipeName });
+      return;
+    }
     if (st.repeat?.count > 0 && st.repeat.intervalMin > 0) {
       for (let k = 1; k <= st.repeat.count; k++) {
         const at = st.start + k * st.repeat.intervalMin * 60000;
         if (at < st.end) ev.push({ key: `${s.id}:r${i}:${k}:${m(at)}`, at, title: `${kindOf(st.kind).icon} ${st.name} – ${k}/${st.repeat.count}`, body: `Zeit für Dehnen & Falten · ${s.recipeName}` });
       }
     }
-    const next = tl.slice(i + 1).find((x) => !x.doneAt);
+    const next = nextMain(tl, i);
     ev.push({ key: `${s.id}:e${i}:${m(st.end)}`, at: st.end,
       title: next ? `⏰ Jetzt: ${next.name}` : `🎉 ${s.recipeName} ist fertig!`,
       body: next ? `„${st.name}“ ist abgeschlossen · ${s.recipeName}` : 'Trag dein Ergebnis ins Tagebuch ein.' });
@@ -1423,13 +1563,24 @@ function sessionEvents(s, now) {
 
 function vBakeList() {
   const active = S.sessions.filter((s) => s.status === 'active').sort((a, b) => a.startAt - b.startAt);
-  const past = S.sessions.filter((s) => s.status !== 'active').sort((a, b) => b.startAt - a.startAt).slice(0, 10);
+  const allPast = S.sessions.filter((s) => s.status !== 'active').sort((a, b) => b.startAt - a.startAt);
+  const nCancel = allPast.filter((s) => s.status !== 'done').length;
+  // Abgebrochene standardmäßig ausblenden
+  const past = allPast.filter((s) => S.showCancelled || s.status === 'done').slice(0, S.showCancelled ? 20 : 10);
+  const pastCard = (s) => {
+    const log = s.logId && S.logs.find((l) => l.id === s.logId);
+    const sub = `<small class="muted">${fmtRel(s.startAt)} · ${s.status === 'done' ? 'abgeschlossen' : 'abgebrochen'}</small>`;
+    if (log) return `<a class="card row between past" href="#/log/${log.recipeId}/${log.id}"><div><b>${esc(s.recipeName)}</b><br>${sub}</div><span class="pill">📓 ansehen</span></a>`;
+    return `<div class="card row between past"><a class="grow" href="#/bake/${s.id}"><b>${esc(s.recipeName)}</b><br>${sub}</a>${s.status === 'done' && byId(s.recipeId) ? `<a class="btn sm" href="#/log/${s.recipeId}/new?session=${s.id}">📓 Eintragen</a>` : ''}</div>`;
+  };
   const html = `
   <header class="top"><h1 class="title">Backen</h1></header>
   <div class="pad">
     ${notifCard()}
+    ${culturesCard()}
     ${active.length ? active.map(sessionBanner).join('') : `<div class="empty"><div class="empty-ic">⏲️</div><h2>Gerade läuft nichts</h2><p>Öffne ein Rezept und tippe auf <b>Backen planen</b>. Du siehst sofort, wann du backen kannst – und wirst bei jedem Schritt erinnert.</p><a class="btn primary" href="#/">Zu den Rezepten</a></div>`}
-    ${past.length ? `<h3 class="sec">Zuletzt</h3>${past.map((s) => `<div class="card row between"><div><b>${esc(s.recipeName)}</b><br><small class="muted">${fmtRel(s.startAt)} · ${s.status === 'done' ? 'abgeschlossen' : 'abgebrochen'}</small></div>${s.status === 'done' && !s.logId && byId(s.recipeId) ? `<a class="btn sm" href="#/log/${s.recipeId}/new?session=${s.id}">📓 Eintragen</a>` : ''}</div>`).join('')}` : ''}
+    ${past.length || nCancel ? `<h3 class="sec">Zuletzt</h3>${past.map(pastCard).join('')}
+      ${nCancel ? `<button class="more-link" data-action="toggleCancelled">${S.showCancelled ? 'Abgebrochene ausblenden' : `+ ${nCancel} abgebrochene anzeigen`}</button>` : ''}` : ''}
   </div>`;
   return { html };
 }
@@ -1448,7 +1599,7 @@ function vSession(sid) {
   const now = Date.now();
   const info = planInfo(effSteps(s), s.startAt, now);
   const tl = info.tl;
-  const cur = tl.find((x) => !x.doneAt);
+  const cur = curStep(tl);
   const planned = cur && cur.i === 0 && cur.start > now;
   const done = !cur;
   const r = byId(s.recipeId);
@@ -1465,7 +1616,6 @@ function vSession(sid) {
       <div class="ht-cd" data-cd="${cur.start}" data-cd-mode="bare"></div><div class="ht-sub">bis zum Start</div>
       <button class="btn primary big block" data-action="sessStartNow" data-id="${s.id}">${icon('play')} Jetzt schon starten</button></div>`;
   } else {
-    const next = tl.slice(cur.i + 1).find((x) => !x.doneAt);
     let rep = '';
     if (cur.repeat?.count > 0 && cur.repeat.intervalMin > 0) {
       const iv = cur.repeat.intervalMin * 60000;
@@ -1482,6 +1632,7 @@ function vSession(sid) {
       ${compNote(cur)}
       ${rep}
       ${cur.notes ? `<div class="ht-notes">${esc(cur.notes)}</div>` : ''}
+      ${sideSteps(s, tl, cur, now)}
       ${measBox(s, cur)}
       <div class="ht-tools">
         ${hasDone(s) ? `<button class="btn sm" data-action="stepBack" data-id="${s.id}" aria-label="Einen Schritt zurück">↶ Zurück</button>` : ''}
@@ -1496,8 +1647,8 @@ function vSession(sid) {
   let goHtml = '';
   if (s.status === 'active' && cur && !planned) {
     const stg = stepIngredients(s, cur);
-    const next = tl.slice(cur.i + 1).find((x) => !x.doneAt);
-    goHtml = `${stg ? `<section class="card step-ing" data-tk="${s.id}:${cur.i}"><div class="card-h"><b>🧾 Zutaten: ${esc(stg.title)}</b><small class="muted">antippen zum Abhaken</small></div>${ingTable('', '', stg.rows)}</section>` : ''}
+    const next = nextMain(tl, cur.i);
+    goHtml = `${stg ? `<section class="card step-ing" data-tk="${s.id}:${cur.i}"><div class="card-h"><b>🧾 Zutaten: ${esc(stg.title)}</b><small class="muted">antippen zum Abhaken</small></div>${ingTable('', '', stg.rows)}${adjBox(s, stg)}</section>` : ''}
       <button class="btn primary big block step-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}">${icon('check')} ${next ? `Weiter: ${esc(next.name)}` : 'Fertig'}</button>`;
   }
   const html = `
@@ -1528,8 +1679,16 @@ async function finishStep(s, i, hands) {
   if (s.steps[i].doneAt) return render();
   s.steps[i].doneAt = Date.now();
   await saveSession(s);
+  // „Anstellgut auffrischen“ erledigt → Fütterung bei der Kultur eintragen
+  const cult = s.steps[i].cultureId && cultById(s.steps[i].cultureId);
+  if (cult) {
+    const at = Date.now();
+    await addFeed(cult, { at, note: `Backtag: ${s.recipeName}` });
+    s.steps[i].feedAt = at; await saveSession(s); // für „↶ Zurück“: diese Fütterung wieder austragen
+    toast(`🫙 Fütterung bei „${cult.name}“ eingetragen`);
+  }
   if (hands) {
-    const next = planInfo(effSteps(s), s.startAt, Date.now()).tl.find((x) => !x.doneAt);
+    const next = curStep(planInfo(effSteps(s), s.startAt, Date.now()).tl);
     speak(next ? `Jetzt: ${next.name}. ${speakDur(next.durationMin)}.` : 'Fertig. Guten Appetit!');
   }
   render();
@@ -1538,17 +1697,31 @@ const hasDone = (s) => s.steps.some((x) => x.doneAt);
 // Zutaten nur bei Schritten zeigen, in denen tatsächlich etwas vermengt wird
 const MIX_KINDS = new Set(['prep', 'autolyse', 'mix']);
 // Kuchen: Zutaten bei allen Schritten mit zugeordnetem Bestandteil (z. B. „Füllen“); Tourieren: Ziehfett beim ersten Tourieren
-function stepIngredients(s, st) {
+function stageOfStep(s, st) {
   if (!st) return null;
-  if (s.calc?.kind === 'cake') return st.stage ? stageRows(s.calc, st.stage) : null;
+  if (s.calc?.kind === 'cake') return st.stage || null;
   if (st.kind === 'laminate') {
     const first = s.steps.findIndex((x) => x.kind === 'laminate');
-    const stage = st.stage || (first === st.i ? 'lam' : null);
-    return stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
+    return st.stage || (first === st.i ? 'lam' : null);
   }
   if (!MIX_KINDS.has(st.kind)) return null;
-  const stage = st.stage || (st.kind === 'mix' ? 'main' : null);
-  return stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
+  return st.stage || (st.kind === 'mix' ? 'main' : null);
+}
+const rowVal = (x) => (x.type === 'cake' ? num(x.v) : num(x.g));
+function stepIngredients(s, st) {
+  const stage = stageOfStep(s, st);
+  const res = stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
+  if (!res) return null;
+  // Mit „🎨 Anpassen“ geänderte Mengen kennzeichnen
+  if (s.adjust?.[stage]) {
+    const base = stageRows(sessCalc(s, false), stage, s.yeastType)?.rows || [];
+    res.rows.forEach((r) => {
+      const b = base.find((x) => x.key === r.key);
+      if (!b) { r.chg = true; r.hint = [r.hint, 'dazu'].filter(Boolean).join(' · '); }
+      else if (Math.abs(rowVal(b) - rowVal(r)) > 0.05) { r.chg = true; r.hint = [r.hint, `statt ${b.txt ?? fmtG(b.g)}`].filter(Boolean).join(' · '); }
+    });
+  }
+  return { ...res, stage };
 }
 // Mengen des Backvorgangs – mit heute notierter Wassertemperatur/Eis-Menge
 // Heute notierte Wasser/Eis-Werte aus ALLEN Hauptteig-Mischschritten ('' = bewusst leer)
@@ -1557,21 +1730,153 @@ function waterOverrides(s) {
   s.steps.forEach((x) => { if (isMainMix(x) && x.meas) ['water', 'ice'].forEach((k) => { if (x.meas[k] !== undefined) o[k] = x.meas[k]; }); });
   return o;
 }
-function sessCalc(s) {
-  if (s.calc?.kind === 'cake') return s.calc;
+// withAdj = false: Mengen laut Plan (ohne „🎨 Anpassen“)
+function sessCalc(s, withAdj = true) {
+  if (s.calc?.kind === 'cake') return withAdj ? adjCake(s.calc, s.adjust) : s.calc;
   const o = waterOverrides(s);
-  if (!Object.keys(o).length) return s.calc;
-  const c = structuredClone(s.calc);
-  if ('water' in o) c.main.waterTemp = o.water;
-  if ('ice' in o) c.main.ice = Math.min(Math.max(0, c.main.water), Math.max(0, num(o.ice)));
-  return c;
+  let c = s.calc;
+  if (Object.keys(o).length) {
+    c = structuredClone(s.calc);
+    if ('water' in o) c.main.waterTemp = o.water;
+    if ('ice' in o) c.main.ice = Math.min(Math.max(0, c.main.water), Math.max(0, num(o.ice)));
+  }
+  return withAdj ? adjCalc(c, s.adjust) : c;
+}
+
+// ---------- 🎨 Anpassen: Mengen während des Backens ändern ----------
+// s.adjust = { [Stufe]: { [Zeilen-Schlüssel]: neue Grammzahl, _add: [{ name, g }] } } – nur dieser Backvorgang.
+// Was schon in einer Stufe steckt, bleibt fest: geändert wird nur die Stufe, deren Zeile angepasst wurde.
+// Hydration, Salz-/Hefe-Anteil und Teigmenge werden über ALLE Stufen neu berechnet.
+function adjCalc(c, adj) {
+  if (!c || !adj || !Object.keys(adj).length) return c;
+  const x = structuredClone(c), t = x.totals, m = x.main;
+  const val = (st, k, base) => { const v = adj[st]?.[k]; return v === undefined || v === null || v === '' ? base : Math.max(0, num(v)); };
+  let dF = 0, dW = 0, dD = 0, dLiq = 0;
+  const flourD = new Map();
+  const addF = (name, d) => { if (d) flourD.set(name, (flourD.get(name) || 0) + d); };
+  x.pfs.forEach((p) => {
+    if (!adj[p.id]) return;
+    const sh = num(p.pf.starterHydration ?? 100) / 100, sF = (v) => v / (1 + sh);
+    const nf = val(p.id, 'flour', p.freshFlour), nw = val(p.id, 'water', p.freshWater), ns = val(p.id, 'starter', p.starter), ny = val(p.id, 'yeast', p.yeast);
+    const df = nf - p.freshFlour + sF(ns) - sF(p.starter), dw = nw - p.freshWater + (ns - sF(ns)) - (p.starter - sF(p.starter)), dy = ny - p.yeast;
+    const nsl = val(p.id, 'salt', num(p.salt)), dsl = nsl - num(p.salt);
+    // Frisch zugegebene Flüssigkeit aufteilen: Milch-Anteil → Milch des Rezepts, Rest + Anstellgut-Wasser → Wasser
+    const share = p.pf.liquid === 'milk' ? 1 : p.pf.liquid === 'mix' ? Math.min(1, Math.max(0, num(p.pf.milkShare) / 100)) : 0;
+    const dFresh = nw - p.freshWater, milkD = dFresh * share, waterD = dw - milkD;
+    Object.assign(p, { freshFlour: nf, freshWater: nw, starter: ns, yeast: ny, salt: nsl, flour: p.flour + df, water: p.water + dw,
+      milkG: num(p.milkG) + milkD, waterG: num(p.waterG) + waterD });
+    p.total += df + dw + dy + dsl;
+    dD += df + dw + dy + dsl; t.yeast += dy; t.salt += dsl;
+    // Saaten zählen nicht zum Mehl/Wasser; Milch zählt zur Milch-Zutat (Gesamtmenge) und zur wirksamen Flüssigkeit
+    if (!p.seeds) {
+      dF += df; addF(p.flourName, df); dW += waterD;
+      if (milkD) {
+        const mi = C.milkIndex(m.extras);
+        if (mi >= 0) m.extras[mi].total = (m.extras[mi].total ?? m.extras[mi].g) + milkD;
+        t.extras += milkD; dLiq += milkD * C.liquidShare('Milch');
+      }
+    }
+  });
+  if (adj.main) {
+    m.flours.forEach((f, k) => { const n = val('main', `f${k}`, f.g), d = n - f.g; if (d) { f.g = n; dF += d; dD += d; addF(f.name, d); } });
+    (adj.main._add || []).forEach((a, n) => {
+      const g = val('main', `a${n}`, num(a.g));
+      m.flours.push({ name: a.name || 'Mehl', g, _key: `a${n}` });
+      dF += g; dD += g; addF(a.name || 'Mehl', g);
+    });
+    const liq0 = Math.max(0, m.water) - num(m.ice);
+    const nl = val('main', 'water', liq0), ni = val('main', 'ice', num(m.ice)), dw = nl + ni - liq0 - num(m.ice);
+    if (dw || ni !== num(m.ice)) { m.water = Math.max(0, m.water) + dw; m.ice = ni; dW += dw; dD += dw; }
+    ['salt', 'yeast', 'oil'].forEach((k) => { const n = val('main', k, m[k]), d = n - m[k]; if (d) { m[k] = n; dD += d; t[k] += d; } });
+    m.extras.forEach((e, j) => { const n = val('main', `x${j}`, e.g), d = n - e.g; if (d) { e.g = n; e.total = (e.total ?? e.g - d) + d; dD += d; t.extras += d; dLiq += d * C.liquidShare(e.name); } });
+  }
+  if (adj.lam && x.lam) { const n = val('lam', 'lam', x.lam.g), d = n - x.lam.g; if (d) { x.lam.g = n; t.lam = n; dD += d; } }
+  // Summen neu
+  x.F += dF; t.flour = x.F; t.water += dW; t.liquid = num(t.liquid) + dW + dLiq;
+  x.D += dD; t.dough = x.D;
+  t.hydration = x.F > 0 ? (t.water / x.F) * 100 : 0;
+  t.hydEff = x.F > 0 ? (t.liquid / x.F) * 100 : 0;
+  t.hydrationOil = x.F > 0 ? ((t.water + t.oil) / x.F) * 100 : 0;
+  m.extras.forEach((e) => { e.pct = x.F > 0 ? ((e.total ?? e.g) / x.F) * 100 : 0; });
+  if (x.lam) { x.lam.pct = x.F > 0 ? (x.lam.g / x.F) * 100 : 0; x.lam.base = x.D - x.lam.g; }
+  const fl = (t.flours || []).map((f) => ({ ...f }));
+  flourD.forEach((d, name) => { const f = fl.find((y) => y.name === name); if (f) f.g += d; else fl.push({ name, g: d }); });
+  t.flours = fl.map((f) => ({ ...f, pct: x.F > 0 ? (f.g / x.F) * 100 : 0 }));
+  t.pfFlourPct = x.F > 0 ? (x.pfs.filter((p) => !p.seeds).reduce((a, p) => a + p.flour, 0) / x.F) * 100 : 0;
+  if (c.D > 0) { if (x.mode === 'flour') x.count = c.count * (x.D / c.D); else x.pieceWeight = c.pieceWeight * (x.D / c.D); }
+  return x;
+}
+function adjCake(c, adj) {
+  if (!c || !adj || !Object.keys(adj).length) return c;
+  const x = structuredClone(c);
+  x.parts.forEach((p) => {
+    const a = adj[p.id];
+    if (!a) return;
+    (a._add || []).forEach((n) => p.items.push({ name: n.name || 'Zutat', unit: n.unit || 'g', amount: 1, v: Math.max(0, num(n.v)) }));
+    p.items.forEach((it, k) => { const v = a[`i${k}`]; if (v !== undefined && v !== '') { it.v = Math.max(0, num(v)); if (!(it.amount > 0)) it.amount = 1; } it.g = C.cakeItemG(it); });
+    p.g = p.items.reduce((s2, it) => s2 + (it.g || 0), 0);
+  });
+  x.total = x.parts.reduce((s2, p) => s2 + p.g, 0);
+  return x;
+}
+async function adjSet(s, st, k, v) {
+  s.adjust ||= {};
+  s.adjust[st] ||= {};
+  s.adjust[st][k] = v;
+  S.adjOpen = `${s.id}:${st}`;
+  await saveSession(s);
+  render();
+}
+// Nebenher-Zeile im Backvorgang (z. B. Ofen vorheizen während der Stückgare)
+function sideSteps(s, tl, cur, now) {
+  const list = tl.filter((x) => isSide(x) && !x.doneAt && x !== cur && x.start <= cur.end);
+  if (!list.length) return '';
+  return `<div class="side-steps">${list.map((x) => `<div class="side-step"><span>⇉ ${kindOf(x.kind).icon} <b>${esc(x.name)}</b> <small>${x.start > now ? `nebenher ab ${fmtTime(x.start)}` : `nebenher · <span data-cd="${x.end}" data-cd-mode="left"></span>`}</small></span>
+    ${x.start <= now ? `<button class="icon-btn" data-action="stepDone" data-id="${s.id}" data-i="${x.i}" aria-label="${esc(x.name)} erledigt">${icon('check')}</button>` : ''}</div>`).join('')}</div>`;
+}
+// „🎨 Anpassen“ unter den Zutaten eines Schritts (eingeklappt)
+function adjBox(s, stg) {
+  if (!feat('adjust') || !stg) return '';
+  const st = stg.stage, cake = s.calc?.kind === 'cake', key = `${s.id}:${st}`;
+  const c = sessCalc(s), c0 = sessCalc(s, false), changed = !!s.adjust?.[st];
+  const rows = stg.rows.filter((r) => r.type !== 'fixed');
+  // „Ziel-Hydration“ und „+10 g Wasser“ nur, wenn die Stufe echtes Wasser hat (nicht Milch, nicht Quellwasser)
+  const realWater = rows.some((r) => r.key === 'water' && r.type === 'water');
+  const field = (r) => `<span class="unit-in w90"><input class="in" inputmode="decimal" data-change="adj" data-id="${s.id}" data-st="${esc(st)}" data-k="${r.key}" value="${cake ? fmtIn(r.v, 2) : fmtIn(r.g, r.g < 20 ? 1 : 0)}" aria-label="${esc(r.name)}"><span class="u">${cake ? esc(r.unit) : 'g'}</span></span>`;
+  const pct = (a, F) => (F > 0 ? (a / F) * 100 : 0);
+  let info = '', align = false;
+  if (cake) info = `Zutaten ≈ ${fmtG(c0.total)} → <b>${fmtG(c.total)}</b>`;
+  else {
+    const t = c.totals, t0 = c0.totals, sP = pct(t.salt, c.F), sP0 = pct(t0.salt, c0.F), yP = pct(t.yeast, c.F), yP0 = pct(t0.yeast, c0.F);
+    const hChg = Math.abs(t.hydration - t0.hydration) > 0.05, dChg = Math.abs(c.D - c0.D) > 0.5;
+    const parts = [hChg ? `Hydration ${fmtPct(t0.hydration)} → <b>${fmtPct(t.hydration)}</b>` : `Hydration ${fmtPct(t.hydration)}`];
+    if (showEff(c)) parts.push(`wirksam ${fmtPct(t.hydEff)}`);
+    if (Math.abs(sP - sP0) > 0.02) parts.push(`Salz ${fmtPct(sP0)} → ${fmtPct(sP)}`);
+    if (t0.yeast > 0 && Math.abs(yP - yP0) > 0.005) parts.push(`Hefe ${fmtPct(yP0)} → ${fmtPct(yP)}`);
+    parts.push(c.mode === 'flour' ? (dChg ? `Teig ${fmtG(c0.D)} → <b>${fmtG(c.D)}</b>` : `Teig ${fmtG(c.D)}`)
+      : `${fmtNum(c.count, 0)} × ${dChg ? `<b>${fmtNum(c.pieceWeight, 0)} g</b> statt ${fmtNum(c0.pieceWeight, 0)} g` : `${fmtNum(c.pieceWeight, 0)} g`}`);
+    info = parts.join(' · ');
+    align = st === 'main' && (Math.abs(sP - sP0) > 0.02 || (c.main.yeast > 0 && Math.abs(yP - yP0) > 0.005));
+  }
+  const hasWater = realWater;
+  return `<details class="adj" data-adj="${esc(key)}" ${S.adjOpen === key ? 'open' : ''}>
+    <summary>🎨 Anpassen${changed ? ` <small class="muted">· ${cake ? 'angepasst' : `jetzt ${fmtPct(c.totals.hydration)}`}</small>` : ''}</summary>
+    ${rows.map((r) => `<div class="adj-row ${r.chg ? 'chg' : ''}"><span>${esc(r.name)}</span>${field(r)}</div>`).join('')}
+    ${hasWater ? `<div class="adj-row"><span>Ziel-Hydration <small class="muted">gesamt</small></span><span class="unit-in w90"><input class="in" inputmode="decimal" data-change="adjHyd" data-id="${s.id}" data-st="${esc(st)}" value="${fmtIn(c.totals.hydration, 1)}" aria-label="Ziel-Hydration"><span class="u">%</span></span></div>
+      <div class="chips"><button class="chip" data-action="adjQuick" data-id="${s.id}" data-st="${esc(st)}" data-k="water" data-d="10">+10 g Wasser</button><button class="chip" data-action="adjQuick" data-id="${s.id}" data-st="${esc(st)}" data-k="flour" data-d="10">+10 g Mehl</button></div>` : ''}
+    ${st === 'main' && !cake ? `<div class="row gap line"><input class="in grow" id="adj-fn" list="adj-flours" placeholder="Mehl dazumischen …"><span class="unit-in w90"><input class="in" id="adj-fg" inputmode="decimal" placeholder="0"><span class="u">g</span></span><button class="icon-btn tonal" data-action="adjAddFlour" data-id="${s.id}" aria-label="Mehl hinzufügen">${icon('plus')}</button></div>
+      <datalist id="adj-flours">${X.FLOUR_NAMES.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}
+    ${cake ? `<div class="row gap line"><input class="in grow" id="adj-in" placeholder="Zutat dazu …"><input class="in w70" id="adj-iv" inputmode="decimal" placeholder="0"><select class="in w80" id="adj-iu">${C.UNITS.map((u) => `<option>${u}</option>`).join('')}</select><button class="icon-btn tonal" data-action="adjAddItem" data-id="${s.id}" data-st="${esc(st)}" aria-label="Zutat hinzufügen">${icon('plus')}</button></div>` : ''}
+    <div class="adj-info">${info}</div>
+    ${align || changed ? `<div class="row gap wrap">${align ? `<button class="btn sm" data-action="adjAlign" data-id="${s.id}">Salz/Hefe angleichen</button>` : ''}${changed ? `<button class="btn sm ghost" data-action="adjReset" data-id="${s.id}" data-st="${esc(st)}">↶ Rezeptmengen</button>` : ''}</div>` : ''}
+  </details>`;
 }
 
 // ---------- Teighände-Modus ----------
 function vHands(s) {
   const now = Date.now();
   const tl = planInfo(effSteps(s), s.startAt, now).tl;
-  const cur = tl.find((x) => !x.doneAt);
+  const cur = curStep(tl);
   const undo = hasDone(s) ? `<button class="hands-small" data-action="stepBack" data-id="${s.id}">↶ Zurück</button>` : '';
   const top = (label) => `<div class="hands-top"><span>${label}</span><button class="hands-x" data-action="handsExit" aria-label="Teighände-Modus beenden">${icon('x')}</button></div>`;
   let body;
@@ -1583,8 +1888,9 @@ function vHands(s) {
       <div class="hands-cd" data-cd="${cur.start}" data-cd-mode="bare"></div><div class="hands-sub">bis zum Start</div><div class="grow"></div>
       <button class="hands-go" data-action="sessStartNow" data-id="${s.id}">▶ Jetzt starten</button>`;
   } else {
-    const next = tl.slice(cur.i + 1).find((x) => !x.doneAt);
+    const next = nextMain(tl, cur.i);
     const stg = stepIngredients(s, cur);
+    const side = tl.find((x) => isSide(x) && !x.doneAt && x !== cur && x.start <= cur.end);
     let rep = '';
     if (cur.repeat?.count > 0 && cur.repeat.intervalMin > 0) {
       const iv = cur.repeat.intervalMin * 60000;
@@ -1598,10 +1904,11 @@ function vHands(s) {
       ${compNote(cur)}${rep}
       ${cur.notes ? `<div class="hands-notes">${esc(cur.notes)}</div>` : ''}
       ${stg ? `<div class="hands-ing" data-tk="${s.id}:${cur.i}">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${x.txt ?? fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
+      ${side ? `<div class="hands-sub">⇉ Nebenher: <b>${esc(side.name)}</b> ${side.start > now ? `ab ${fmtTime(side.start)}` : `· <span data-cd="${side.end}" data-cd-mode="left"></span>`}</div>` : ''}
       <div class="grow"></div>
       ${next ? `<div class="hands-sub">Danach: <b>${esc(next.name)}</b> · ${fmtTime(Math.max(next.start, cur.end))}</div>` : ''}
       <button class="hands-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}" data-hands="1">✓ ${next ? 'Weiter' : 'Fertig'}</button>
-      <div class="hands-row">${undo}<button class="hands-small" data-action="stepShift" data-id="${s.id}" data-i="${cur.i}" data-min="15">+15 min</button></div>`;
+      <div class="hands-row">${undo}${stg && feat('adjust') && stg.rows.some((x) => x.type === 'water') ? `<button class="hands-small" data-action="adjQuick" data-id="${s.id}" data-st="${stg.stage}" data-k="water" data-d="10">+10 g Wasser</button><button class="hands-small" data-action="adjQuick" data-id="${s.id}" data-st="${stg.stage}" data-k="flour" data-d="10">+10 g Mehl</button>` : ''}<button class="hands-small" data-action="stepShift" data-id="${s.id}" data-i="${cur.i}" data-min="15">+15 min</button></div>`;
   }
   return { html: `<div class="hands">${body}</div>` };
 }
@@ -1645,16 +1952,29 @@ function measDefaults(s) {
 function measLabel(m) {
   return [...MEAS, ...MEAS_WATER].filter(([k]) => m?.[k] !== undefined && m[k] !== '').map(([k, l, u]) => `${l} ${fmtNum(m[k])} ${u}`).join(' · ');
 }
+// Teiggefühl nur bei Schritten, in denen man den Teig in der Hand hat
+const FEEL_KINDS = new Set(['mix', 'autolyse', 'bulk', 'fold', 'shape', 'laminate', 'proof', 'rest']);
+// Kurzfassung dessen, was zu einem Schritt notiert wurde (für die eingeklappte Zeile)
+function noteSum(st) {
+  return [measLabel(st.meas), st.feel && `🤲 ${C.FEELS[st.feel]}`, st.note && '✏️ Notiz', st.photos?.length && `📷 ${st.photos.length}`].filter(Boolean).join(' · ');
+}
+// „📝 Notieren“: Temperaturen, Teiggefühl, Notiz und Fotos zum laufenden Schritt – alles in einem eingeklappten Bereich
 function measBox(s, cur) {
-  const m = s.steps[cur.i].meas || {};
+  const step = s.steps[cur.i], m = step.meas || {};
   const water = s.calc?.kind !== 'cake' && isMainMix(cur);
   const def = water ? measDefaults(s) : {};
   const fields = water ? [...MEAS, ...MEAS_WATER] : MEAS;
   const shown = { ...def, ...(water ? waterOverrides(s) : {}), ...m };
-  return `<details class="meas" data-meas="${s.id}:${cur.i}" ${S.measOpen === `${s.id}:${cur.i}` ? 'open' : ''}><summary>🌡️ <span id="meas-sum">${measLabel(m) || (water ? 'Temperaturen &amp; Wasser notieren' : 'Temperatur notieren')}</span></summary>
-    <div class="meas-row">${fields.map(([k, l, u]) => `<label><small>${k === 'dough' ? 'Teig (z. B. nach Kneten)' : k === 'water' ? 'Wassertemperatur' : k === 'ice' ? 'davon Eis' : l}</small><span class="unit-in"><input class="in" inputmode="decimal" data-change="meas" data-id="${s.id}" data-i="${cur.i}" data-k="${k}" value="${shown[k] !== undefined && shown[k] !== '' ? fmtIn(shown[k], k === 'ice' ? 0 : 1) : ''}"><span class="u">${u}</span></span></label>`).join('')}</div>
+  const feel = s.calc?.kind !== 'cake' && FEEL_KINDS.has(cur.kind);
+  const at = `data-id="${s.id}" data-i="${cur.i}"`;
+  return `<details class="meas" data-meas="${s.id}:${cur.i}" ${S.measOpen === `${s.id}:${cur.i}` ? 'open' : ''}><summary>📝 <span id="meas-sum">${noteSum(step) || 'Notieren'}</span> <small class="muted">${noteSum(step) ? '' : feel ? 'Temperatur, Teiggefühl, Notiz, Foto' : 'Temperatur, Notiz, Foto'}</small></summary>
+    ${feel ? `<div class="meas-l">Teiggefühl</div><div class="seg small feel">${Object.entries(C.FEELS).map(([k, l]) => `<button class="${step.feel === k ? 'on' : ''}" data-action="stepFeel" ${at} data-v="${k}">${l}</button>`).join('')}</div>` : ''}
+    <div class="meas-row">${fields.map(([k, l, u]) => `<label><small>${k === 'dough' ? 'Teig (z. B. nach Kneten)' : k === 'water' ? 'Wassertemperatur' : k === 'ice' ? 'davon Eis' : l}</small><span class="unit-in"><input class="in" inputmode="decimal" data-change="meas" ${at} data-k="${k}" value="${shown[k] !== undefined && shown[k] !== '' ? fmtIn(shown[k], k === 'ice' ? 0 : 1) : ''}"><span class="u">${u}</span></span></label>`).join('')}</div>
     ${water && (def.water !== undefined || def.ice !== undefined) ? '<small class="muted">Wasser/Eis sind aus dem Rezept vorbelegt – ändere sie, falls du es heute anders machst.<br></small>' : ''}
-    <small class="muted">Wird automatisch ins Tagebuch übernommen.${feat('tempComp') ? ' Die Raumtemperatur passt die Garzeiten an.' : ''}</small>
+    <textarea class="in note-in" rows="2" data-change="stepNote" ${at} placeholder="Notiz zu diesem Schritt, z. B. „Teig sehr klebrig“">${esc(step.note || '')}</textarea>
+    <div class="thumbs">${(step.photos || []).map((p) => `<button class="ph thumb" data-action="viewPhoto" data-id="${p}"><img data-photo="${p}" alt=""></button>`).join('')}
+      <label class="thumb add">${icon('camera')}<span>Foto</span><input type="file" accept="image/*" capture="environment" hidden data-change="stepPhoto" ${at}></label></div>
+    <small class="muted">Alles landet automatisch im Tagebuch.${feat('tempComp') ? ' Die Raumtemperatur passt die Garzeiten an.' : ''}</small>
   </details>`;
 }
 function compNote(st) {
@@ -1676,6 +1996,151 @@ function sessTemps(s) {
     waterTemp: opt(wm.water, 1), iceG: opt(wm.ice, 0) };
 }
 
+// ---------- Backprotokoll (im Tagebuch-Eintrag gespeichert) ----------
+function protoBlocks(c, c0, yt) {
+  const mk = (title, rows, base) => ({ title, rows: rows.map((x) => {
+    const b = base.find((y) => y.key === x.key), txt = x.txt ?? fmtG(x.g), was = b ? (b.txt ?? fmtG(b.g)) : 'neu';
+    return { name: x.name, txt, was: was === txt ? '' : was };
+  }) });
+  if (c.kind === 'cake') return c.parts.map((p) => mk(p.name || 'Zutaten', cakeRows(p), cakeRows(c0.parts.find((y) => y.id === p.id) || { items: [] })));
+  const out = c.pfs.map((x) => mk(x.pf.name || 'Vorteig', pfRows(x, yt), pfRows(c0.pfs.find((y) => y.id === x.id) || x, yt)));
+  out.push(mk(c.lam?.g > 0 ? 'Grundteig' : 'Hauptteig', mainRows(c, yt), mainRows(c0, yt)));
+  if (c.lam?.g > 0) out.push(mk('Ziehfett', lamRows(c), c0.lam?.g > 0 ? lamRows(c0) : []));
+  return out;
+}
+// Prozentwerte des Backtags – zum Übernehmen ins Rezept bzw. als Variante (C.applyPct)
+function protoPct(c) {
+  if (c.kind === 'cake') return { cake: c.parts.map((p) => ({ id: p.id, items: p.items.map((it) => ({ name: it.name, unit: it.unit, amount: c.factor > 0 ? Math.round((it.v / c.factor) * 100) / 100 : it.v })) })) };
+  const F = c.F, pc = (g) => (F > 0 ? (g / F) * 100 : 0);
+  return {
+    water: c.totals.hydration, salt: pc(c.totals.salt), yeast: pc(c.main.yeast), oil: pc(c.totals.oil), lam: pc(c.lam?.g || 0),
+    flours: (c.totals.flours || []).map((f) => ({ name: f.name, pct: f.pct })), extras: c.main.extras.map((e) => ({ name: e.name, pct: pc(e.total ?? e.g) })),
+    pfs: c.pfs.map((p) => ({ id: p.id, flourPct: pc(p.flour), hydration: p.flour > 0 ? (p.water / p.flour) * 100 : 0,
+      starterPct: !p.chained && p.freshFlour > 0 && num(p.pf.starterPct) > 0 ? (p.starter / p.freshFlour) * 100 : 0, yeastPct: p.flour > 0 ? (p.yeast / p.flour) * 100 : 0,
+      saltPct: p.flour > 0 ? (num(p.salt) / p.flour) * 100 : 0 })),
+  };
+}
+function buildProtocol(s) {
+  const tl = C.timeline(effSteps(s), s.startAt);
+  const c = sessCalc(s), c0 = sessCalc(s, false), cake = c.kind === 'cake', r = byId(s.recipeId);
+  const blocks = protoBlocks(c, c0, s.yeastType);
+  const changes = blocks.flatMap((b) => b.rows.filter((x) => x.was).map((x) => ({ stage: b.title, name: x.name, from: x.was === 'neu' ? '–' : x.was, to: x.txt })));
+  const stName = (st) => (st === 'main' ? 'Hauptteig' : st === 'lam' ? 'Ziehfett' : [...(r?.preferments || []), ...(r?.parts || [])].find((p) => p.id === st)?.name || '');
+  const done = tl.map((x) => x.doneAt).filter(Boolean);
+  return {
+    startAt: s.startAt, endAt: done.length ? Math.max(...done) : null,
+    hydration: cake ? null : c.totals.hydration, baseHydration: cake ? null : c0.totals.hydration, dough: cake ? c.total : c.D,
+    steps: tl.map((x) => {
+      const b = s.steps[x.i];
+      return { name: x.name, kind: x.kind, loc: x.location, plan: num(b.durationMin), act: x.doneAt ? Math.max(0, Math.round((x.doneAt - x.start) / 60000)) : null,
+        start: x.start, end: x.doneAt || null, par: x.parallel ? (x.align === 'end' ? 'end' : 'start') : '', temp: x.temp || '', stage: stName(stageOfStep(s, x)),
+        note: b.note || '', feel: b.feel || '', photos: b.photos || [], meas: b.meas || {}, shift: num(b.shiftMin) || null, comp: x._comp ? Math.round(num(x.durationMin) - num(b.shiftMin)) : null };
+    }),
+    blocks, changes, pct: changes.length ? protoPct(c) : null,
+  };
+}
+// Abweichung eines Schritts: erst ab 5 min bzw. 10 % zählt sie (sonst wird es unruhig)
+const protoDelta = (p) => {
+  if (p.act === null || p.act === undefined || p.plan === null) return 0;
+  const d = p.act - p.plan;
+  return Math.abs(d) >= Math.max(5, 0.1 * p.plan) ? d : 0;
+};
+function protoSum(pr) {
+  const st = pr.steps || [];
+  const up = st.filter((p) => protoDelta(p) > 0).length, dn = st.filter((p) => protoDelta(p) < 0).length;
+  const feels = [...new Set(st.map((p) => p.feel).filter(Boolean))].map((f) => C.FEELS[f]);
+  return [up && `${up} länger`, dn && `${dn} kürzer`, !up && !dn && st.some((p) => p.act !== null) && 'wie geplant',
+    pr.changes?.length && `🎨 ${pr.changes.length} angepasst`, feels.length && `🤲 ${feels.join(', ')}`,
+    st.some((p) => p.note) && '✏️', st.some((p) => p.photos?.length) && '📷'].filter(Boolean).join(' · ');
+}
+function protoRow(p, i, edit) {
+  const d = protoDelta(p);
+  const extra = [p.feel && `🤲 ${C.FEELS[p.feel]}`, measLabel(p.meas), p.comp && `🌡️ Temperatur-Ausgleich: ${fmtDur(p.comp)}`, p.shift && `${p.shift > 0 ? '+' : '−'}${fmtDur(Math.abs(p.shift))} per Knopf`].filter(Boolean);
+  const hh = Math.floor(num(p.act) / 60), mm = Math.round(num(p.act) % 60);
+  return `<li class="tl-i loc-${p.loc} ${p.par ? 'par' : ''}"><div class="tl-dot">${kindOf(p.kind).icon}</div><div class="tl-c">
+    <div class="tl-h"><b>${esc(p.name)}</b><span class="tl-when">${p.start ? fmtTime(p.start) : ''}</span></div>
+    <div class="tl-m">${p.par ? '<span class="par-tag">nebenher</span> · ' : ''}geplant ${fmtDur(p.plan)}${p.act !== null ? ` · tatsächlich <b>${fmtDur(p.act)}</b>` : ' · <span class="muted">nicht erledigt</span>'}${d ? ` <span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : '−'}${fmtDur(Math.abs(d))}</span>` : ''}</div>
+    ${edit && p.act !== null ? `<div class="row gap dur proto-edit"><span class="unit-in"><input class="in" inputmode="numeric" data-change="protoAct" data-i="${i}" data-part="h" value="${hh}" aria-label="Stunden"><span class="u">h</span></span><span class="unit-in"><input class="in" inputmode="numeric" data-change="protoAct" data-i="${i}" data-part="m" value="${mm}" aria-label="Minuten"><span class="u">min</span></span></div>` : ''}
+    ${extra.length ? `<div class="tl-m">${extra.map(esc).join(' · ')}</div>` : ''}
+    ${p.note ? `<div class="tl-n">✏️ ${esc(p.note)}</div>` : ''}
+    ${p.photos?.length ? `<div class="thumbs">${p.photos.map((ph) => `<button class="ph thumb" data-action="viewPhoto" data-id="${ph}"><img data-photo="${ph}" alt=""></button>`).join('')}</div>` : ''}
+  </div></li>`;
+}
+function protoSection(l) {
+  const pr = l.protocol;
+  if (!pr) {
+    return l.sessionId && sessById(l.sessionId) ? `<div class="hint-card small"><div>⏱ Der Backvorgang zu diesem Eintrag ist noch auf dem Gerät.</div><button class="btn sm" data-action="protoFromSession">Ablauf übernehmen</button></div>` : '';
+  }
+  const hyd = pr.hydration !== null && pr.baseHydration !== null && Math.abs(pr.hydration - pr.baseHydration) > 0.05 ? ` · Hydration ${fmtPct(pr.baseHydration)} → ${fmtPct(pr.hydration)}` : '';
+  return `<details class="card proto" ${S.protoEdit ? 'open' : ''}><summary>⏱ Ablauf <small class="muted">${protoSum(pr) || `${pr.steps.length} Schritte`}</small></summary>
+    ${pr.changes?.length ? `<div class="proto-chg">🎨 <b>Angepasst</b>${hyd}<br>${pr.changes.map((c) => `${esc(c.name)}: ${esc(c.from)} → <b>${esc(c.to)}</b>`).join('<br>')}</div>` : ''}
+    <ol class="tl">${pr.steps.map((p, i) => protoRow(p, i, S.protoEdit)).join('')}</ol>
+    ${pr.steps.some((p) => p.act !== null) ? `<button class="btn sm ghost" data-action="protoEdit">${S.protoEdit ? `${icon('check')} Fertig` : '✎ Zeiten korrigieren'}</button>` : ''}
+  </details>
+  ${pr.blocks?.length ? `<details class="card"><summary>🧾 Zutaten dieses Backtags${pr.hydration !== null ? ` <small class="muted">${fmtPct(pr.hydration)}</small>` : ''}</summary>
+    ${pr.blocks.map((b) => `<section class="ing"><h3>${esc(b.title)}</h3><table>${b.rows.map((x) => `<tr ${x.was ? 'class="chg"' : ''}><td>${esc(x.name)}${x.was ? `<small>${x.was === 'neu' ? 'dazu' : `statt ${esc(x.was)}`}</small>` : ''}</td><td class="num">${esc(x.txt)}</td></tr>`).join('')}</table></section>`).join('')}
+  </details>` : ''}`;
+}
+
+// ---------- Vergleich zweier Tagebuch-Einträge (nur Unterschiede) ----------
+function vCmp(rid, q) {
+  const r = byId(rid);
+  if (!r) return vNotFound();
+  const logs = logsFor(rid);
+  if (logs.length < 2) return { html: `<div class="pad empty"><p>Zum Vergleichen braucht es mindestens zwei Tagebuch-Einträge.</p><a class="btn" href="#/r/${rid}?tab=log">Zurück</a></div>` };
+  // Voreinstellung: bester gegen letzten Eintrag
+  const best = logs.filter((l) => l.rating > 0).sort((x, y) => y.rating - x.rating)[0] || logs[1];
+  let A = S.logs.find((l) => l.id === q.get('a')) || (best.id === logs[0].id ? logs[1] : best);
+  let B = S.logs.find((l) => l.id === q.get('b')) || logs[0];
+  if ((A.date || '') > (B.date || '')) [A, B] = [B, A]; // älterer links
+  const win = A.rating === B.rating ? null : A.rating > B.rating ? 'a' : 'b';
+  const pr = (l) => l.params || {};
+  const T = (l, k) => esc(l[k] ?? '');
+  const rows = [];
+  const add = (label, a, b) => rows.push({ label, a: a === '' || a === undefined || a === null ? '–' : a, b: b === '' || b === undefined || b === null ? '–' : b });
+  (SUBRATINGS[r.category] || SUBRATINGS.other).forEach(([k, lbl]) => add(lbl, A.sub?.[k] ? '★'.repeat(A.sub[k]) : '', B.sub?.[k] ? '★'.repeat(B.sub[k]) : ''));
+  if (!isCake(r)) {
+    add('Hydration', num(pr(A).hydration) ? fmtPct(pr(A).hydration) : '', num(pr(B).hydration) ? fmtPct(pr(B).hydration) : '');
+    add('Salz', num(pr(A).salt) ? fmtPct(pr(A).salt) : '', num(pr(B).salt) ? fmtPct(pr(B).salt) : '');
+    add('Hefe', num(pr(A).yeastPct) ? fmtPct(pr(A).yeastPct) : '', num(pr(B).yeastPct) ? fmtPct(pr(B).yeastPct) : '');
+    add('Vorteig', esc(pr(A).pf), esc(pr(B).pf));
+    add('Menge', pr(A).count ? `${fmtNum(pr(A).count, 0)} × ${fmtNum(pr(A).pieceWeight, 0)} g` : '', pr(B).count ? `${fmtNum(pr(B).count, 0)} × ${fmtNum(pr(B).pieceWeight, 0)} g` : '');
+    add('Mehl', esc(pr(A).flour), esc(pr(B).flour));
+  } else add('Form', esc(pr(A).pan), esc(pr(B).pan));
+  add('Gesamtzeit', num(pr(A).totalHours) ? `${fmtNum(pr(A).totalHours)} h` : '', num(pr(B).totalHours) ? `${fmtNum(pr(B).totalHours)} h` : '');
+  [['doughTemp', 'Teig', ' °C'], ['roomTemp', 'Raum', ' °C'], ['fridgeTemp', 'Kühlschrank', ' °C'], ['waterTemp', 'Wasser', ' °C'], ['iceG', 'Eis', ' g'], ['oven', 'Ofen', ''], ['bakeTemp', 'Backtemperatur', ' °C'], ['bakeTime', 'Backzeit', '']]
+    .forEach(([k, lbl, u]) => add(lbl, A[k] ? T(A, k) + u : '', B[k] ? T(B, k) + u : ''));
+  // Schritte aus dem Backprotokoll: tatsächliche Dauer (kleine Abweichungen unter 10 % zählen nicht) und Teiggefühl
+  // Nur vergleichen, wenn beide Einträge ein Backprotokoll haben – sonst lauter „–“
+  const sa = A.protocol?.steps || [], sb = B.protocol?.steps || [];
+  if (sa.length && sb.length) [...new Set([...sa, ...sb].map((s) => s.name))].forEach((name) => {
+    const x = sa.find((s) => s.name === name), y = sb.find((s) => s.name === name);
+    const ta = x?.act ?? null, tb = y?.act ?? null;
+    if (ta !== null && tb !== null && Math.abs(ta - tb) < Math.max(5, 0.1 * Math.max(ta, tb))) add(`⏱ ${esc(name)}`, fmtDur(ta), fmtDur(ta));
+    else add(`⏱ ${esc(name)}`, ta !== null ? fmtDur(ta) : '', tb !== null ? fmtDur(tb) : '');
+    if (x?.feel || y?.feel) add(`🤲 ${esc(name)}`, x?.feel ? C.FEELS[x.feel] : '', y?.feel ? C.FEELS[y.feel] : '');
+  });
+  add('🎨 Angepasst', (A.protocol?.changes || []).map((c) => `${esc(c.name)} → ${esc(c.to)}`).join('<br>'), (B.protocol?.changes || []).map((c) => `${esc(c.name)} → ${esc(c.to)}`).join('<br>'));
+  add('Nächstes Mal', esc(A.nextTime), esc(B.nextTime));
+  const diff = rows.filter((x) => x.a !== x.b), same = rows.filter((x) => x.a === x.b && x.a !== '–');
+  const show = S.cmpAll ? rows.filter((x) => x.a !== '–' || x.b !== '–') : diff;
+  const opt = (sel, side) => `<select class="in" data-change="cmpPick" data-side="${side}" data-rid="${rid}" data-a="${A.id}" data-b="${B.id}">${logs.map((l) => `<option value="${l.id}" ${l.id === sel.id ? 'selected' : ''}>${fmtDate(l.date)}${l.rating ? ` · ${'★'.repeat(l.rating)}` : ''}</option>`).join('')}</select>`;
+  // Teiggefühl nach Hydration über alle Einträge („Bei 72 % war er immer ‚passt‘“)
+  const fh = new Map();
+  logs.forEach((l) => (l.protocol?.steps || []).forEach((s) => { if (s.feel && num(l.params?.hydration)) { const k = fmtPct(Math.round(num(l.params.hydration) * 2) / 2); const m = fh.get(k) || {}; m[s.feel] = (m[s.feel] || 0) + 1; fh.set(k, m); } }));
+  const feelCard = fh.size >= 2 ? `<details class="card"><summary>🤲 Teiggefühl nach Hydration <small class="muted">alle Einträge</small></summary>
+    ${[...fh.entries()].sort((x, y) => num(x[0]) - num(y[0])).map(([h, m]) => `<div class="row between"><span>${h}</span><span>${Object.entries(m).map(([f, n]) => `${C.FEELS[f]}${n > 1 ? ` ×${n}` : ''}`).join(' · ')}</span></div>`).join('')}</details>` : '';
+  return { html: `
+  <header class="top sub"><a class="icon-btn" href="#/r/${rid}?tab=log" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Tagebuch · ${esc(r.name)}</div><h1 class="title sm">Vergleich</h1></div></header>
+  <div class="pad">
+    <div class="cmp-pick"><div class="${win === 'a' ? 'win' : ''}">${opt(A, 'a')}<div class="cmp-stars">${A.rating ? stars(A.rating) : '–'}</div></div><div class="${win === 'b' ? 'win' : ''}">${opt(B, 'b')}<div class="cmp-stars">${B.rating ? stars(B.rating) : '–'}</div></div></div>
+    ${show.length ? `<table class="cmp">${show.map((x) => `<tr><th>${x.label}</th><td class="${win === 'a' ? 'win' : ''}">${x.a}</td><td class="${win === 'b' ? 'win' : ''}">${x.b}</td></tr>`).join('')}</table>`
+      : '<p class="muted center">Keine Unterschiede gefunden.</p>'}
+    <button class="more-link" data-action="cmpAll">${S.cmpAll ? 'Nur Unterschiede zeigen' : `${same.length} ${same.length === 1 ? 'Wert' : 'Werte'} gleich – alle zeigen`}</button>
+    ${feelCard}
+  </div>` };
+}
+
 // ---------- Tagebuch-Eintrag ----------
 function vLog(rid, lid, q) {
   const r = byId(rid);
@@ -1691,13 +2156,17 @@ function vLog(rid, lid, q) {
       const sess = q.get('session') ? sessById(q.get('session')) : null;
       S.logDraft = {
         id: uid(), recipeId: rid, date: todayISO(), rating: 0, sub: {}, params: paramsFrom(r, sess),
-        roomTemp: '', doughTemp: '', fridgeTemp: '', waterTemp: '', iceG: '', oven: '', bakeTemp: '', bakeTime: '', notes: '', nextTime: '', photos: [],
+        roomTemp: '', doughTemp: '', fridgeTemp: '', waterTemp: '', iceG: '', oven: '', bakeTemp: '', bakeTime: '', notes: '', nextTime: '',
+        // Fotos aus dem Backvorgang (je Schritt) gehören zum Eintrag → Sicherung & Sync
+        photos: sess ? [...new Set(sess.steps.flatMap((x) => x.photos || []))] : [],
         sessionId: sess?.id || null, createdAt: Date.now(),
+        protocol: sess ? buildProtocol(sess) : null,
         ...sessTemps(sess),
       };
     }
     S.logDraft._key = key;
     S.logDraft._new = !ex;
+    S.protoEdit = false;
   }
   const l = S.logDraft;
   const subs = SUBRATINGS[r.category] || SUBRATINGS.other;
@@ -1719,6 +2188,7 @@ function vLog(rid, lid, q) {
         <label class="thumb add">${icon('camera')}<span>Foto</span><input type="file" accept="image/*" multiple hidden data-change="addPhotos" data-target="l"></label>
       </div>
     </div>
+    ${protoSection(l)}
     <details class="card"><summary>Parameter <small class="muted">${paramChips(l.params, true)}</small></summary>
     <p class="muted small" style="margin-top:0">Aus ${l.sessionId ? 'dem Backvorgang' : 'dem Rezept'} übernommen – ändere, was du anders gemacht hast.</p>
     ${fld('Datum', `<input class="in" type="date" data-bind="l.date" value="${esc(l.date)}">`)}
@@ -1758,7 +2228,7 @@ function vLog(rid, lid, q) {
 }
 
 function paramsFrom(r, sess) {
-  const c = sess?.calc || calcFor(r);
+  const c = sess ? sessCalc(sess) : calcFor(r);
   const steps = sess?.steps || r.steps;
   const lastDone = sess ? Math.max(0, ...steps.map((x) => x.doneAt || 0)) : 0;
   const total = sess ? ((lastDone || Date.now()) - sess.startAt) / 60000 : planInfo(steps, 0).total;
@@ -1776,6 +2246,97 @@ function paramsFrom(r, sess) {
     totalHours: Math.round((total / 60) * 10) / 10,
     flour: (r.flours || []).map((f) => f.name).filter(Boolean).join(', '),
   };
+}
+
+// ---------- 🫙 Meine Kulturen (Anstellgut, Madre, LiCoLi, Hefewasser …) ----------
+const cultById = (id) => S.cultures.find((c) => c.id === id);
+const lastFeed = (c) => (c.feeds || []).reduce((m, f) => Math.max(m, f.at), 0) || c.createdAt || 0;
+// Tage bis zur nächsten Fütterung (negativ = überfällig); null = kein Rhythmus
+const dueDays = (c) => (num(c.days) > 0 ? (lastFeed(c) + c.days * 86400000 - Date.now()) / 86400000 : null);
+function dueTxt(c) {
+  const d = dueDays(c);
+  if (d === null) return '';
+  if (d < -0.5) return `füttern fällig seit ${Math.round(-d)} ${Math.round(-d) === 1 ? 'Tag' : 'Tagen'}`;
+  if (d < 0.5) return 'heute füttern';
+  return `füttern in ${Math.round(d)} ${Math.round(d) === 1 ? 'Tag' : 'Tagen'}`;
+}
+async function saveCulture(c) {
+  c.updatedAt = Date.now();
+  c.v = Math.max(MG.SCHEMA, num(c.v));
+  const i = S.cultures.findIndex((x) => x.id === c.id);
+  if (i >= 0) S.cultures[i] = c; else S.cultures.push(c);
+  await db.put('cultures', c);
+  scheduleSync();
+}
+async function addFeed(c, f = {}) {
+  c.feeds = [...(c.feeds || []), { at: Date.now(), g: '', temp: null, rise: null, note: '', ...f }].slice(-200);
+  await saveCulture(c);
+}
+// Füttern-Rechner: gewünschte Menge → Anstellgut : Mehl : Wasser
+function feedCalc(c, total) {
+  const [s, f, w] = c.ratio || [1, 1, 1], sum = s + f + w;
+  if (!(sum > 0) || !(total > 0)) return '';
+  const g = (x) => fmtG(Math.round((total * x) / sum));
+  return `<b>${g(s)}</b> ${c.type === 'madre' ? 'Madre' : 'Anstellgut'} + <b>${g(f)}</b> Mehl + <b>${g(w)}</b> Wasser`;
+}
+// Karte im Reiter „Backen“ (eingeklappt)
+function culturesCard() {
+  if (!feat('cultures')) return '';
+  const list = S.cultures.slice().sort((a, b) => (dueDays(a) ?? 99) - (dueDays(b) ?? 99));
+  const due = list.filter((c) => (dueDays(c) ?? 1) < 0.5).length;
+  return `<details class="card cult" ${S.cultOpen || due ? 'open' : ''} data-action-toggle="cult">
+    <summary>🫙 Meine Kulturen <small class="muted">${list.length ? `${list.length}${due ? ` · ${due} fällig` : ''}` : 'Anstellgut & Co. pflegen'}</small></summary>
+    ${list.map((c) => `<div class="cult-row"><a class="grow" href="#/culture/${c.id}"><b>${C.CULTURE_TYPES[c.type]?.icon || '🧫'} ${esc(c.name || C.CULTURE_TYPES[c.type]?.label)}</b><br><small class="${(dueDays(c) ?? 1) < 0.5 ? 'warnt' : 'muted'}">${dueTxt(c) || 'ohne Rhythmus'} · zuletzt ${lastFeed(c) ? fmtRel(lastFeed(c)) : '–'}</small></a>
+      <button class="btn sm" data-action="cultFed" data-id="${c.id}">✓ Gefüttert</button></div>`).join('')}
+    <details class="addmore"><summary><span class="btn sm ghost">${icon('plus')} Kultur anlegen</span></summary>
+      <div class="chips">${Object.entries(C.CULTURE_TYPES).map(([k, v]) => `<button class="chip" data-action="cultNew" data-v="${k}">${v.icon} ${v.label}</button>`).join('')}</div></details>
+  </details>`;
+}
+function cultureHint() {
+  if (!feat('cultures')) return '';
+  const c = S.cultures.find((x) => (dueDays(x) ?? 1) < -0.5 && !(S.settings.cultSnooze?.[x.id] > Date.now()));
+  return c ? `<div class="hint-card"><div>🫙 <b>${esc(c.name)}</b> – ${dueTxt(c)}</div><div class="row gap"><button class="btn sm primary" data-action="cultFed" data-id="${c.id}">✓ Gefüttert</button><button class="icon-btn x-btn" data-action="cultSnooze" data-id="${c.id}" aria-label="Morgen erinnern">${icon('x')}</button></div></div>` : '';
+}
+function vCulture(id) {
+  const c = cultById(id);
+  if (!c) return vNotFound();
+  const t = C.CULTURE_TYPES[c.type] || C.CULTURE_TYPES.custom, yw = c.type === 'yeastwater';
+  const inp = (k, val, unit, label, w = '') => fldU(label, `<input class="in ${w}" inputmode="decimal" data-change="cult" data-id="${c.id}" data-k="${k}" value="${val === '' || val === null || val === undefined ? '' : fmtIn(val, 2)}">`, unit);
+  const feeds = (c.feeds || []).slice().reverse();
+  const html = `
+  <header class="top sub"><a class="icon-btn" href="#/bake" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">🫙 Meine Kulturen · ${esc(t.label)}</div><h1 class="title sm">${esc(c.name || t.label)}</h1></div>
+    <button class="icon-btn" data-action="cultDel" data-id="${c.id}" aria-label="Kultur löschen">${icon('trash')}</button></header>
+  <div class="pad">
+    <div class="big-result small"><div class="br-k">${dueTxt(c) || 'Kein Rhythmus eingestellt'}</div><div class="br-s">zuletzt gefüttert ${lastFeed(c) ? fmtRel(lastFeed(c)) : '–'}</div></div>
+    <section class="card">
+      <div class="card-h"><b>✓ Gefüttert</b><small class="muted">optional: Details</small></div>
+      <div class="grid2">
+        ${fldU('Temperatur', '<input class="in" inputmode="decimal" id="cf-temp" placeholder="z. B. 24">', '°C')}
+        ${fldU('Verdoppelt nach', '<input class="in" inputmode="decimal" id="cf-rise" placeholder="z. B. 6">', 'h')}
+      </div>
+      ${fld('Notiz', '<input class="in" id="cf-note" placeholder="z. B. riecht säuerlich, sehr aktiv">')}
+      <button class="btn primary block" data-action="cultFedSave" data-id="${c.id}">${icon('check')} Jetzt gefüttert</button>
+    </section>
+    ${yw ? '' : `<section class="card">
+      <div class="card-h"><b>🧮 Füttern-Rechner</b><small class="muted">${c.ratio.map((x) => fmtNum(x, 2)).join(' : ')}</small></div>
+      ${fldU('Ich brauche insgesamt', `<input class="in" inputmode="decimal" data-input="cultCalc" data-id="${c.id}" value="${S.cultNeed || ''}" placeholder="z. B. 70 fürs Rezept + 20 Rest">`, 'g')}
+      <div class="result" id="cult-calc">${feedCalc(c, num(S.cultNeed)) || '<span class="muted">Menge eingeben – z. B. was das Rezept braucht plus etwas Rest zum Weiterführen.</span>'}</div>
+    </section>`}
+    <details class="card"><summary>⚙️ Einstellungen <small class="muted">${c.days ? `alle ${c.days} Tage` : 'ohne Rhythmus'} · ${c.place === 'rt' ? 'Raum' : 'Kühlschrank'}</small></summary>
+      ${fld('Name', `<input class="in" data-change="cult" data-id="${c.id}" data-k="name" value="${esc(c.name)}">`)}
+      <div class="grid2">
+        ${inp('days', c.days, 'Tage', 'Füttern alle')}
+        ${inp('lead', c.lead, 'h', 'Auffrischen vor dem Backen')}
+        ${yw ? '' : `${inp('r0', c.ratio[0], 'Teil', 'Anstellgut')}${inp('r1', c.ratio[1], 'Teile', 'Mehl')}${inp('r2', c.ratio[2], 'Teile', 'Wasser')}`}
+      </div>
+      <div class="seg small">${[['fridge', '❄️ Kühlschrank'], ['rt', '🏠 Raum']].map(([k, l]) => `<button class="${c.place === k ? 'on' : ''}" data-action="cultPlace" data-id="${c.id}" data-v="${k}">${l}</button>`).join('')}</div>
+      ${fld('Notizen', `<textarea class="in" rows="2" data-change="cult" data-id="${c.id}" data-k="notes" placeholder="z. B. Mehlsorte, Herkunft">${esc(c.notes)}</textarea>`)}
+      ${yw ? '<p class="muted small">Hefewasser: Wasser und etwas Zucker/Honig bzw. Obst nachfüttern, offen gären lassen, Deckel täglich lüften.</p>' : ''}
+      <button class="btn sm" data-action="cultIcs" data-id="${c.id}">${icon('cal')} Erinnerung in Kalender (wiederkehrend)</button>
+    </details>
+    ${feeds.length ? `<h3 class="sec">Fütterungen</h3><div class="card">${feeds.slice(0, 15).map((f) => `<div class="row between cult-feed"><span>${fmtRel(f.at)}${f.note ? ` · ${esc(f.note)}` : ''}</span><small class="muted">${[f.temp !== null && f.temp !== undefined ? `${fmtNum(f.temp)} °C` : '', f.rise ? `×2 nach ${fmtNum(f.rise)} h` : ''].filter(Boolean).join(' · ')}</small></div>`).join('')}</div>` : ''}
+  </div>`;
+  return { html };
 }
 
 // ---------- Einstellungen ----------
@@ -1798,19 +2359,24 @@ function vSettings() {
       <details class="info"><summary>ⓘ Wann kommen Erinnerungen?</summary><p>Solange die App offen ist oder kurz im Hintergrund läuft. Wird sie komplett beendet, kann eine Web-App nicht mehr wecken – für garantierte Wecker im Backvorgang <b>⋯ → In Kalender eintragen</b>.</p>
       ${perm === 'granted' ? '<button class="btn sm" data-action="testNotif">Test senden</button>' : ''}</details>
     </section>
-    <section class="card">
-      <div class="card-h"><b>🧩 Funktionen</b><small class="muted">nach Bedarf an/aus</small></div>
+    <details class="card fun" ${S.funOpen ? 'open' : ''} data-action-toggle="fun">
+      <summary><b>🧩 Funktionen</b> <small class="muted">${FEATURES.filter(feat).length} von ${FEATURES.length} an · antippen zum Ändern</small></summary>
+      <div class="set-group">Beim Backen</div>
       ${toggle('tempComp', '🌡️ Temperatur-Ausgleich', 'Passt Gare-Zeiten an die Raumtemperatur an (+4 °C ≈ 30 % kürzer).')}
       ${feat('tempComp') ? `<div class="sub-opt">${fldU('Rezepte sind ausgelegt für', `<input class="in" inputmode="decimal" data-bind="set.refRoom" data-num value="${fmtIn(st.refRoom, 1)}">`, '°C', 'Gilt, wenn im Schritt keine Temperatur steht.')}</div>` : ''}
       ${toggle('handsFree', '🙌 Teighände-Modus', 'Große Ansicht zum Bedienen mit Teig an den Fingern.')}
       ${feat('handsFree') ? `<div class="sub-opt">${toggle('voice', '🔊 Sprachansagen', 'Sagt im Teighände-Modus den nächsten Schritt an.')}${toggle('wakeLock', '💡 Bildschirm anlassen', 'Verhindert im Teighände-Modus das Abschalten des Displays.')}</div>` : ''}
       ${toggle('confirmEarly', '⏳ Vorzeitiges Weiter bestätigen', 'Fragt nach, wenn ein Schritt noch läuft und du schon weiter tippst.')}
-      ${toggle('pastry', '🥐 Feingebäck & Kuchen', 'Vorlagen und Kategorien für Croissant, Plunder, Hefeteig, Kuchen und Torten. Vorhandene Rezepte bleiben immer sichtbar.')}
-      ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
+      ${toggle('adjust', '🎨 Anpassen beim Backen', 'Zutaten während des Backens ändern – mit Hydration live und Übernahme ins Rezept.')}
       ${toggle('nightOpt', '🪄 Nachtruhe-Optimierer', 'Schlägt angepasste Kühlschrankzeiten vor.')}
       <div class="set-row"><span><b>🌙 Nachtruhe</b><br><small class="muted">Planer warnt in dieser Zeit</small></span>
         <span class="row gap"><select class="in" style="width:auto" data-bind="set.nightFrom" data-num aria-label="Nachtruhe von">${hours.map((h) => `<option value="${h}" ${st.nightFrom === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}</select>–<select class="in" style="width:auto" data-bind="set.nightTo" data-num aria-label="Nachtruhe bis">${hours.map((h) => `<option value="${h}" ${st.nightTo === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}</select></span></div>
-    </section>
+      <div class="set-group">Rezepte</div>
+      ${toggle('pastry', '🥐 Feingebäck & Kuchen', 'Vorlagen und Kategorien für Croissant, Plunder, Hefeteig, Kuchen und Torten. Vorhandene Rezepte bleiben immer sichtbar.')}
+      ${toggle('cultures', '🫙 Meine Kulturen', 'Anstellgut, Madre, LiCoLi & Co. pflegen – Fütter-Erinnerung, Rechner und Auffrischen vor dem Backtag.')}
+      <div class="set-group">Teilen</div>
+      ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
+    </details>
     <section class="card">
       <div class="card-h"><b>💾 Daten</b><small class="muted">${S.recipes.length} Rezepte · ${S.logs.length} Einträge</small></div>
       <p class="small muted" style="margin-top:0">Alles liegt nur auf diesem Gerät. Letzte Sicherung: <b>${st.lastBackup ? fmtRel(st.lastBackup) : 'noch nie'}</b></p>
@@ -1867,6 +2433,7 @@ function syncCard() {
     <div class="card-h"><b>☁️ Geräte-Sync</b><span class="pill ${s.lastError ? '' : 'ok'}">${s.running ? 'läuft …' : s.lastError ? 'Fehler' : 'aktiv'}</span></div>
     <p class="small muted" style="margin-top:0">${esc(s.email)} · zuletzt ${s.lastOk ? fmtRel(s.lastOk) : 'noch nie'}</p>
     ${s.lastError ? `<div class="warn">⚠️ ${esc(s.lastError)}</div>` : ''}
+    ${s.cultureSql ? '<div class="warn">🫙 „Meine Kulturen“ werden noch nicht abgeglichen: In Supabase einmal das aktuelle <b>supabase-setup.sql</b> ausführen (siehe ANLEITUNG-UPDATE.txt). Rezepte und Tagebuch laufen normal weiter.</div>' : ''}
     <div class="row gap wrap">
       <button class="btn sm primary" data-action="sbSync" ${s.running ? 'disabled' : ''}>Jetzt abgleichen</button>
       <button class="btn sm ghost" data-action="sbLogout">Abmelden</button>
@@ -1943,12 +2510,13 @@ function importFile() {
       const res = await db.importData(obj, {
         cleanRecipe: (x) => { const m = importRecipe(x); if (m.newer) newer++; return m.rec; },
         cleanLog: (x) => { const m = importLog(x); if (m.newer) newer++; return m.rec; },
+        cleanCulture: (x) => { const m = MG.importCulture(x); if (m.newer) newer++; return m.rec; },
       });
       await reload();
       S.scale = null; S.plan = null;
       scheduleSync(500);
       const open = S.recipes.filter((r) => MG.openQuestions(r).length).length;
-      toast(`✓ Importiert: ${res.recipes} Rezepte, ${res.logs} Einträge, ${res.photos} Fotos${res.skipped ? ` (${res.skipped} neuere behalten)` : ''}`, 4000);
+      toast(`✓ Importiert: ${res.recipes} Rezepte, ${res.logs} Einträge${res.cultures ? `, ${res.cultures} Kulturen` : ''}, ${res.photos} Fotos${res.skipped ? ` (${res.skipped} neuere behalten)` : ''}`, 4000);
       if (newer) alert('Diese Sicherung stammt aus einer neueren Teigbuch-Version.\n\nDie Daten wurden vollständig übernommen. Bitte aktualisiere die App, damit alle Angaben genutzt werden können.');
       if (open) { location.hash = '#/fix'; return; }
       render();
@@ -2234,7 +2802,7 @@ const A = {
         const c = structuredClone(r);
         // Fotos NICHT mitkopieren – sonst würde das Löschen der Variante die Fotos des Originals löschen
         Object.assign(c, { id: uid(), name: r.name + ' (Variante)', createdAt: Date.now(), favorite: false, photos: [], cover: null });
-        c.preferments.forEach((pf) => { const old = pf.id; pf.id = uid(); c.steps.forEach((s) => { if (s.stage === old) s.stage = pf.id; }); });
+        c.preferments.forEach((pf) => { const old = pf.id; pf.id = uid(); c.steps.forEach((s) => { if (s.stage === old) s.stage = pf.id; }); c.preferments.forEach((q) => { if (q.starterFrom === old) q.starterFrom = pf.id; }); });
         c.steps.forEach((s) => { s.id = uid(); });
         await saveRecipe(c); location.hash = `#/edit/${c.id}`;
       } },
@@ -2386,7 +2954,8 @@ const A = {
         const add = (name, g, unit = 'g') => { if (g > 0.05) it.push({ name, amount: g < 20 ? Math.round(g * 10) / 10 : Math.round(g), unit }); };
         c.totals.flours.forEach((f) => add(f.name, f.g));
         add('Wasser', c.totals.water, 'ml'); add('Salz', c.totals.salt); add(yeastName(d.yeastType), c.totals.yeast); add('Öl', c.totals.oil);
-        c.main.extras.forEach((e) => add(e.name || 'Zutat', e.g)); add(c.lam.name, c.lam.g);
+        c.main.extras.forEach((e) => add(e.name || 'Zutat', e.total ?? e.g)); add(c.lam.name, c.lam.g);
+        c.pfs.filter((x) => x.seeds).forEach((x) => { add(x.flourName || 'Saaten', x.flour); add('Wasser (Quellstück)', x.water, 'ml'); });
         d.parts = [{ id: uid(), name: 'Teig', items: it }];
       }
       if (!C.panValid(d.pan)) d.pan = { shape: 'round', d: 26, l: 0, w: 0, n: 0 };
@@ -2448,6 +3017,7 @@ const A = {
     const d = S.draft;
     const pf = C.makePf(el.dataset.v, { flourName: d.flours?.[0]?.name || '' });
     if ((el.dataset.v === 'levain' || el.dataset.v === 'madre') && !d.preferments.length && confirm('Sauerteig-Führung: Hefe im Hauptteig auf 0 setzen?')) d.yeastPct = 0;
+    if (el.dataset.v === 'dampfl') dampflYeast(d, pf);
     d.preferments.push(pf);
     render();
   },
@@ -2455,15 +3025,39 @@ const A = {
     const d = S.draft, pf = d.preferments[+el.dataset.i];
     d.preferments.splice(+el.dataset.i, 1);
     d.steps.forEach((s) => { if (s.stage === pf.id) s.stage = null; });
+    d.preferments.forEach((p) => { if (p.starterFrom === pf.id) p.starterFrom = ''; });
     render();
   },
   pfType: (el) => {
     const pf = S.draft.preferments[+el.dataset.i], t = PF_TYPES[el.dataset.v];
     const wasDefaultName = Object.values(PF_TYPES).some((x) => x.label === pf.name);
-    Object.assign(pf, { type: el.dataset.v, hydration: t.hydration, yeastPct: t.yeastPct, starterPct: t.starterPct || 0, starterHydration: t.starterHydration || 100 });
+    Object.assign(pf, { type: el.dataset.v, hydration: t.hydration, yeastPct: t.yeastPct, starterPct: t.starterPct || 0, starterHydration: t.starterHydration || 100,
+      liquid: t.liquid || 'water', saltPct: t.saltPct || 0, seeds: false });
+    // Tangzhong & Co. sind deutlich kleiner als Biga/Poolish – typischen Anteil übernehmen
+    if (['dampfl', 'tangzhong', 'yudane', 'quell', 'pate'].includes(el.dataset.v)) pf.flourPct = t.flourPct;
+    if (el.dataset.v === 'dampfl') dampflYeast(S.draft, pf);
     if (wasDefaultName) pf.name = t.label;
     render();
   },
+  pfLiquid: (el) => {
+    const d = S.draft, pf = d.preferments[+el.dataset.i];
+    pf.liquid = el.dataset.v;
+    if (pf.liquid === 'mix' && !(num(pf.milkShare) > 0)) pf.milkShare = 50;
+    // Milch im Vorteig kommt aus der Milch des Rezepts – fehlt sie, gleich als Zutat anlegen
+    if (pf.liquid !== 'water' && C.milkIndex(d.extras) < 0) {
+      const c = calc(d), x = c.pfs[+el.dataset.i];
+      d.extras.push({ name: 'Milch', pct: x && c.F > 0 ? Math.round((x.milkG / c.F) * 10000) / 100 : 10 });
+      toast('Milch als Zutat ergänzt – dort steht die gesamte Milchmenge des Rezepts.', 4000);
+    }
+    render();
+  },
+  pfExAdd: (el) => {
+    const pf = S.draft.preferments[+el.dataset.i];
+    pf.extras = [...(pf.extras || []), { name: el.dataset.v, pct: 0 }];
+    render();
+  },
+  pfExDel: (el, e) => { e?.preventDefault(); const pf = S.draft.preferments[+el.dataset.i]; pf.extras.splice(+el.dataset.k, 1); render(); },
+  pfSeeds: (el) => { const pf = S.draft.preferments[+el.dataset.i]; pf.seeds = !pf.seeds; if (pf.seeds && !pf.flourName) pf.flourName = 'Saaten'; render(); },
   setUnit: async (el) => { S.settings.unitMode = el.dataset.v; await saveSettings(); render(); },
   setYeastType: (el) => {
     const d = S.draft, from = d.yeastType, to = el.dataset.v;
@@ -2494,16 +3088,26 @@ const A = {
     const [dur, loc] = defaults[k] || [30, 'rt'];
     const s = C.step(k, STEP_KINDS[k].label, dur, loc, k === 'fold' ? { repeat: { count: 4, intervalMin: 30 } } : {});
     const bakeIdx = d.steps.findIndex((x) => x.kind === 'bake');
-    if (k !== 'bake' && k !== 'cool' && k !== 'assemble' && bakeIdx >= 0) d.steps.splice(bakeIdx, 0, s); else d.steps.push(s);
+    const at = k !== 'bake' && k !== 'cool' && k !== 'assemble' && bakeIdx >= 0 ? bakeIdx : d.steps.length;
+    // Vorheizen nach einer Gare läuft automatisch nebenher – der Ofen ist genau zum Ende der Gare heiß
+    if (k === 'preheat' && at > 0 && FERMENT_KINDS.includes(d.steps[at - 1].kind)) Object.assign(s, { parallel: true, align: 'end' });
+    d.steps.splice(at, 0, s);
     S.openStep = s.id;
     render();
   },
   toggleStep: (el) => { S.openStep = S.openStep === el.dataset.id ? null : el.dataset.id; render(); },
   stepLoc: (el) => { S.draft.steps[+el.dataset.i].location = el.dataset.v; render(); },
   toggleRepeat: (el) => { const s = S.draft.steps[+el.dataset.i]; s.repeat = s.repeat ? null : { count: 4, intervalMin: 30 }; render(); },
-  moveStep: (el) => { const i = +el.dataset.i, j = i + +el.dataset.d, st = S.draft.steps; [st[i], st[j]] = [st[j], st[i]]; if (j === 0) st[0].parallel = false; render(); },
+  moveStep: (el) => { const i = +el.dataset.i, j = i + +el.dataset.d, st = S.draft.steps; [st[i], st[j]] = [st[j], st[i]]; if (st[0]) Object.assign(st[0], { parallel: false, align: '' }); render(); },
   dupStep: (el) => { const i = +el.dataset.i, c = structuredClone(S.draft.steps[i]); c.id = uid(); S.draft.steps.splice(i + 1, 0, c); S.openStep = c.id; render(); },
-  delStep: (el) => { S.draft.steps.splice(+el.dataset.i, 1); if (S.draft.steps[0]) S.draft.steps[0].parallel = false; render(); },
+  delStep: (el) => { S.draft.steps.splice(+el.dataset.i, 1); if (S.draft.steps[0]) Object.assign(S.draft.steps[0], { parallel: false, align: '' }); render(); },
+  stepWhen: (el) => {
+    const s = S.draft.steps[+el.dataset.i], v = el.dataset.v;
+    Object.assign(s, { parallel: v !== 'seq', align: v === 'end' ? 'end' : '' });
+    render();
+  },
+  preheatTip: (el) => { Object.assign(S.draft.steps[+el.dataset.i], { parallel: true, align: 'end' }); toast('✓ Vorheizen läuft jetzt nebenher'); render(); },
+  preheatTipOff: async () => { S.settings.preheatTipOff = [...(S.settings.preheatTipOff || []), S.draft.id]; await saveSettings(); render(); },
   setCover: (el) => { S.draft.cover = el.dataset.id; render(); },
   delDraftPhoto: (el) => {
     const d = S.draft, id = el.dataset.id;
@@ -2558,7 +3162,7 @@ const A = {
     const ov = planOv(r);
     const s = {
       id: uid(), recipeId: r.id, recipeName: r.name, category: r.category, createdAt: Date.now(), startAt, status: 'active',
-      ov, calc: calcFor(r, ov), yeastType: r.yeastType, steps: structuredClone(planStepsBase(r)).map((x) => ({ ...x, doneAt: null })), notified: [], logId: null,
+      ov, calc: calcFor(planRecipe(r), ov), yeastType: r.yeastType, steps: structuredClone(planStepsBase(r)).map((x) => ({ ...x, doneAt: null })), notified: [], logId: null,
       room: S.plan.ov.room ?? '',
     };
     await saveSession(s);
@@ -2575,8 +3179,9 @@ const A = {
     const tl = planInfo(effSteps(s), s.startAt, now).tl;
     const cur = tl.find((x) => x.i === i);
     const left = cur ? cur.end - now : 0;
-    if (feat('confirmEarly') && left >= 60000) {
-      const next = tl.find((x) => x.i > i && !x.doneAt);
+    // Nebenher-Schritte (z. B. Ofen vorheizen) ohne Rückfrage abhaken
+    if (feat('confirmEarly') && left >= 60000 && !isSide(cur)) {
+      const next = nextMain(tl, i);
       sheet(`„${cur.name}“ läuft noch ${fmtDur(left / 60000)}`, [
         { label: next ? `Ja, weiter zu „${esc(next.name)}“` : 'Ja, Backvorgang abschließen', icon: 'check', primary: true,
           // Session frisch holen – während das Fenster offen war, kann ein Sync die Daten neu geladen haben
@@ -2592,12 +3197,118 @@ const A = {
     const last = s.steps.reduce((b, x, i) => (x.doneAt && (b < 0 || x.doneAt >= s.steps[b].doneAt) ? i : b), -1);
     if (last < 0) return;
     s.steps[last].doneAt = null;
+    // Automatisch eingetragene Fütterung wieder entfernen (sonst doppelt beim erneuten Erledigen)
+    const cu = s.steps[last].cultureId && cultById(s.steps[last].cultureId);
+    if (cu && s.steps[last].feedAt) { cu.feeds = (cu.feeds || []).filter((f) => f.at !== s.steps[last].feedAt); s.steps[last].feedAt = null; await saveCulture(cu); }
     if (s.status === 'done') s.status = 'active';
     await saveSession(s);
     toast(`↶ Schritt „${s.steps[last].name}“ wieder geöffnet`);
     if (S.hands === s.id) speak(`Zurück: ${s.steps[last].name}.`);
     render();
   },
+  stepFeel: async (el) => {
+    const s = sessById(el.dataset.id), st = s?.steps[+el.dataset.i];
+    if (!st) return;
+    st.feel = st.feel === el.dataset.v ? '' : el.dataset.v;
+    S.measOpen = `${s.id}:${el.dataset.i}`;
+    await saveSession(s);
+    render();
+  },
+  adjQuick: (el) => {
+    const s = sessById(el.dataset.id), st = el.dataset.st, d = num(el.dataset.d);
+    if (!s) return;
+    const rows = stageRows(sessCalc(s), st, s.yeastType)?.rows || [];
+    const row = el.dataset.k === 'water' ? rows.find((r) => r.key === 'water' && r.type === 'water') : rows.find((r) => r.type === 'flour');
+    if (!row) return;
+    adjSet(s, st, row.key, Math.round((row.g + d) * 10) / 10).then(() => {
+      toast(`+${d} g ${el.dataset.k === 'water' ? 'Wasser' : 'Mehl'} · Hydration jetzt ${fmtPct(sessCalc(s).totals.hydration)}`);
+      if (S.hands) speak(`Hydration jetzt ${fmtNum(sessCalc(s).totals.hydration)} Prozent.`);
+    });
+  },
+  adjAddFlour: (el) => {
+    const s = sessById(el.dataset.id), name = $('#adj-fn')?.value.trim(), g = num($('#adj-fg')?.value);
+    if (!s || !(g > 0)) { toast('Bitte Mehlsorte und Menge eingeben'); return; }
+    s.adjust ||= {}; s.adjust.main ||= {};
+    s.adjust.main._add = [...(s.adjust.main._add || []), { name: name || 'Mehl', g }];
+    adjSet(s, 'main', '_t', Date.now());
+  },
+  adjAddItem: (el) => {
+    const s = sessById(el.dataset.id), st = el.dataset.st, name = $('#adj-in')?.value.trim(), v = num($('#adj-iv')?.value), unit = $('#adj-iu')?.value || 'g';
+    if (!s || !name || !(v > 0)) { toast('Bitte Zutat und Menge eingeben'); return; }
+    s.adjust ||= {}; s.adjust[st] ||= {};
+    s.adjust[st]._add = [...(s.adjust[st]._add || []), { name, v, unit }];
+    adjSet(s, st, '_t', Date.now());
+  },
+  // Salz (und Hefe im Hauptteig) so anpassen, dass der Anteil am – geänderten – Mehl wie geplant bleibt
+  adjAlign: (el) => {
+    const s = sessById(el.dataset.id);
+    if (!s) return;
+    const c = sessCalc(s), c0 = sessCalc(s, false);
+    s.adjust ||= {}; s.adjust.main ||= {};
+    const msg = [];
+    if (c0.F > 0) {
+      const salt = c.main.salt + ((c0.totals.salt / c0.F) * c.F - c.totals.salt);
+      if (salt >= 0 && Math.abs(salt - c.main.salt) > 0.05) { msg.push(`Salz ${fmtG(salt)}`); s.adjust.main.salt = Math.round(salt * 10) / 10; }
+      const yeast = c.main.yeast + ((c0.totals.yeast / c0.F) * c.F - c.totals.yeast);
+      if (c.main.yeast > 0 && yeast >= 0 && Math.abs(yeast - c.main.yeast) > 0.05) { msg.push(`${yeastName(s.yeastType)} ${fmtG(yeast)}`); s.adjust.main.yeast = Math.round(yeast * 10) / 10; }
+    }
+    adjSet(s, 'main', '_t', Date.now()).then(() => toast(msg.length ? `✓ ${msg.join(' · ')}` : 'Passt schon'));
+  },
+  adjReset: async (el) => {
+    const s = sessById(el.dataset.id);
+    if (!s?.adjust) return;
+    delete s.adjust[el.dataset.st];
+    await saveSession(s);
+    toast('↶ Wieder die Mengen laut Plan');
+    render();
+  },
+  toggleCancelled: () => { S.showCancelled = !S.showCancelled; render(); },
+  // 🫙 Meine Kulturen
+  cultNew: async (el) => {
+    const t = C.CULTURE_TYPES[el.dataset.v] || C.CULTURE_TYPES.custom;
+    const c = C.sanitizeCulture({ id: uid(), name: t.label, type: el.dataset.v, ratio: t.ratio, hydration: t.hydration, days: t.days, place: t.place, lead: t.lead, feeds: [{ at: Date.now(), note: 'angelegt' }] });
+    await saveCulture(c);
+    location.hash = `#/culture/${c.id}`;
+  },
+  cultFed: async (el) => {
+    const c = cultById(el.dataset.id);
+    if (!c) return;
+    await addFeed(c);
+    toast(`✓ ${c.name} gefüttert${c.days ? ` – nächstes Mal ${fmtRel(Date.now() + c.days * 86400000).replace(/ \d\d:\d\d$/, '')}` : ''}`);
+    render();
+  },
+  cultFedSave: async (el) => {
+    const c = cultById(el.dataset.id);
+    if (!c) return;
+    const temp = C.optNum($('#cf-temp')?.value), rise = C.optNum($('#cf-rise')?.value);
+    await addFeed(c, { temp: temp === '' ? null : temp, rise: rise === '' ? null : rise, note: ($('#cf-note')?.value || '').trim().slice(0, 300) });
+    toast('✓ Fütterung eingetragen');
+    render();
+  },
+  cultSnooze: async (el) => { S.settings.cultSnooze = { ...(S.settings.cultSnooze || {}), [el.dataset.id]: Date.now() + 86400000 }; await saveSettings(); render(); },
+  cultPlace: async (el) => { const c = cultById(el.dataset.id); if (!c) return; c.place = el.dataset.v; await saveCulture(c); render(); },
+  cultIcs: (el) => {
+    const c = cultById(el.dataset.id);
+    if (!c || !(c.days > 0)) { toast('Bitte zuerst „Füttern alle … Tage“ einstellen.'); return; }
+    const f = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const e = (t) => String(t).replace(/[\\;,]/g, (m) => '\\' + m);
+    const at = new Date(lastFeed(c) + c.days * 86400000); at.setHours(9, 0, 0, 0);
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Teigbuch//DE', 'BEGIN:VEVENT', `UID:kultur-${c.id}@teigbuch`, `DTSTAMP:${f(Date.now())}`, `DTSTART:${f(at.getTime())}`, `DTEND:${f(at.getTime() + 15 * 60000)}`,
+      `RRULE:FREQ=DAILY;INTERVAL=${c.days}`, `SUMMARY:${e(`🫙 ${c.name} füttern`)}`, `DESCRIPTION:${e(`Teigbuch: ${c.ratio.map((x) => fmtNum(x, 2)).join(' : ')} (Anstellgut : Mehl : Wasser)`)}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${e(`${c.name} füttern`)}`, 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    shareOrDownload(new Blob([ics], { type: 'text/calendar' }), `${slug(c.name)}-fuettern.ics`, c.name);
+  },
+  cultDel: async (el) => {
+    const c = cultById(el.dataset.id);
+    if (!c || !confirm(`„${c.name}“ samt Fütterungsprotokoll löschen?`)) return;
+    await db.del('cultures', c.id);
+    await sync.markDeleted('culture', c.id);
+    S.cultures = S.cultures.filter((x) => x.id !== c.id);
+    scheduleSync(500);
+    toast('Kultur gelöscht');
+    location.hash = '#/bake';
+  },
+  cmpAll: () => { S.cmpAll = !S.cmpAll; render(); },
   handsOn: (el) => { S.hands = el.dataset.id; render(); keepAwake(true); speak('Teighände-Modus an.'); },
   handsExit: () => { S.hands = null; keepAwake(false); render(); },
   stepShift: async (el) => {
@@ -2629,7 +3340,13 @@ const A = {
       ...(byId(s.recipeId) ? [{ label: 'Rezept öffnen', icon: 'book', run: () => { location.hash = `#/r/${s.recipeId}`; } }] : []),
       { label: 'Neu starten (Startzeit jetzt)', icon: 'timer', run: async () => { if (!confirm('Alle Schritte zurücksetzen und jetzt neu starten?')) return; s.startAt = Date.now(); s.createdAt = Date.now(); s.steps.forEach((x) => { x.doneAt = null; x.shiftMin = 0; }); s.status = 'active'; await saveSession(s); render(); } },
       ...(s.status === 'active' ? [{ label: 'Backvorgang abbrechen', icon: 'x', danger: true, run: () => A.sessCancel({ dataset: { id: s.id } }) }] : []),
-      { label: 'Backvorgang löschen', icon: 'trash', danger: true, run: async () => { if (!confirm('Backvorgang löschen?')) return; await db.del('sessions', s.id); S.sessions = S.sessions.filter((x) => x.id !== s.id); location.hash = '#/bake'; } },
+      { label: 'Backvorgang löschen', icon: 'trash', danger: true, run: async () => {
+        if (!confirm('Backvorgang löschen?')) return;
+        // Schritt-Fotos mitlöschen – außer sie stecken schon in einem Tagebuch-Eintrag
+        const used = new Set(S.logs.flatMap((l) => l.photos || []));
+        for (const p of s.steps.flatMap((x) => x.photos || [])) if (!used.has(p)) await db.deletePhoto(p);
+        await db.del('sessions', s.id); S.sessions = S.sessions.filter((x) => x.id !== s.id); location.hash = '#/bake';
+      } },
     ]);
   },
   askNotif,
@@ -2657,6 +3374,8 @@ const A = {
     const l = S.logDraft;
     const isNew = l._new;
     for (const p of l._removed || []) await db.deletePhoto(p);
+    // Entfernte Fotos auch aus dem Backprotokoll austragen (sonst tauchen sie per Sync wieder auf)
+    if (l.protocol?.steps && (l._removed || []).length) l.protocol.steps.forEach((st) => { st.photos = (st.photos || []).filter((ph) => !l._removed.includes(ph)); });
     delete l._key; delete l._new; delete l._removed;
     S.logNewPhotos = [];
     await saveLog(l);
@@ -2693,6 +3412,17 @@ const A = {
   },
   applyLog: async (el) => {
     const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l.recipeId), pr = l.params || {};
+    // Mit Backprotokoll: genau die Änderungen dieses Backtags („🎨 Anpassen“) übernehmen
+    if (l.protocol?.pct) {
+      const ch = l.protocol.changes || [];
+      if (!confirm(`Änderungen vom ${fmtDate(l.date)} ins Rezept übernehmen?\n\n${ch.slice(0, 8).map((c) => `${c.name}: ${c.from} → ${c.to}`).join('\n')}${ch.length > 8 ? '\n…' : ''}\n\nDie Menge (Anzahl/Gewicht) bleibt, die Anteile werden übernommen.`)) return;
+      C.applyPct(r, l.protocol.pct);
+      await saveRecipe(r);
+      S.scale = null; S.plan = null;
+      toast('✓ Rezept aktualisiert');
+      render();
+      return;
+    }
     if (!confirm(`Hydration ${fmtPct(pr.hydration)}, Salz ${fmtPct(pr.salt)}${pr.count ? `, ${fmtNum(pr.count, 0)} × ${fmtNum(pr.pieceWeight, 0)} g` : ''} ins Rezept übernehmen?`)) return;
     if (pr.hydration) r.water.pct = num(pr.hydration);
     if (pr.salt) r.salt = num(pr.salt);
@@ -2703,6 +3433,40 @@ const A = {
     render();
   },
 
+  // Änderungen eines Backtags als eigenes Rezept speichern – das Original bleibt unverändert
+  logVariant: async (el) => {
+    const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l?.recipeId);
+    if (!r || !l.protocol?.pct) return;
+    const c = C.applyPct(structuredClone(r), l.protocol.pct);
+    Object.assign(c, { id: uid(), name: `${r.name} (Variante ${fmtDate(l.date).replace(/^\w+\.,\s*/, '')})`, createdAt: Date.now(), favorite: false, photos: [], cover: null });
+    c.steps.forEach((s) => { s.id = uid(); });
+    await saveRecipe(c);
+    toast('✓ Variante gespeichert – das Original bleibt unverändert', 3500);
+    location.hash = `#/r/${c.id}`;
+  },
+  protoEdit: () => { S.protoEdit = !S.protoEdit; render(); },
+  protoFromSession: () => {
+    const l = S.logDraft, sess = l && sessById(l.sessionId);
+    if (!sess) return;
+    l.protocol = buildProtocol(sess);
+    l.photos = [...new Set([...(l.photos || []), ...sess.steps.flatMap((x) => x.photos || [])])];
+    toast('✓ Ablauf übernommen – zum Sichern „Speichern“ tippen');
+    render();
+  },
+  planUsePct: (el) => {
+    const r = S.plan && byId(S.plan.id), l = S.logs.find((x) => x.id === el.dataset.id);
+    if (!r || !l?.protocol?.pct) return;
+    S.plan.usePct = l.id;
+    if (!isCake(r)) S.plan.ov.hydration = Math.round(l.protocol.pct.water * 100) / 100;
+    render();
+  },
+  planUsePctOff: () => {
+    const r = S.plan && byId(S.plan.id);
+    if (!r) return;
+    S.plan.usePct = null;
+    if (!isCake(r)) S.plan.ov.hydration = r.water.pct;
+    render();
+  },
   qrCopy: async () => { try { await navigator.clipboard.writeText(S.qrUrl); toast('✓ Link kopiert'); } catch { toast('Kopieren nicht möglich'); } },
   qrShare: async () => { try { await navigator.share({ title: 'Teigbuch-Rezept', url: S.qrUrl }); } catch { /* abgebrochen */ } },
   scanQR: () => openScanner(),
@@ -2773,7 +3537,7 @@ const A = {
       // Gerät war vorher mit einem anderen Konto verbunden → Daten nicht ungefragt vermischen
       if (sync.consumeAccountSwitch() && (S.recipes.length || S.logs.length)
         && !confirm('Dieses Gerät war mit einem anderen Konto verbunden.\n\nOK = vorhandene Rezepte in dieses Konto übernehmen\nAbbrechen = vorhandene Rezepte vom Gerät entfernen und nur die Rezepte dieses Kontos laden')) {
-        for (const st of ['recipes', 'logs', 'photos']) await db.clear(st);
+        for (const st of ['recipes', 'logs', 'photos', 'cultures']) await db.clear(st);
         await reload();
       }
       toast('✓ Angemeldet – Rezepte werden abgeglichen …', 3500);
@@ -2801,13 +3565,22 @@ const A = {
     if (!confirm(`Wirklich ALLE Daten auf diesem Gerät löschen? Das kann nicht rückgängig gemacht werden.${cloud}`)) return;
     if (!confirm('Letzte Chance: Alles auf diesem Gerät löschen?')) return;
     await sync.idle(); // laufenden Abgleich abwarten, damit er nichts zurückschreibt
-    for (const st of ['recipes', 'logs', 'sessions', 'photos']) await db.clear(st);
+    for (const st of ['recipes', 'logs', 'sessions', 'photos', 'cultures']) await db.clear(st);
     await sync.resetLocal();
     await reload();
     toast('Alle Daten gelöscht');
     location.hash = '#/';
   },
 };
+
+// Dampfl: die Hefe des Hauptteigs wandert in das Dampfl (sonst wäre sie doppelt)
+function dampflYeast(d, pf) {
+  if (num(d.yeastPct) > 0 && num(pf.flourPct) > 0) {
+    pf.yeastPct = Math.round((num(d.yeastPct) / num(pf.flourPct)) * 10000) / 100;
+    d.yeastPct = 0;
+    toast('Die Hefe ist jetzt komplett im Dampfl – im Hauptteig steht 0.', 4000);
+  }
+}
 
 function startDraft() {
   S.draft._new = true;
@@ -2865,6 +3638,11 @@ const INPUTS = {
   },
   kiInput: (el) => { S.ki.input = el.value; const p = $('#ki-prompt'); if (p) p.value = KI.buildPrompt(el.value); },
   kiAnswer: (el) => { S.ki.answer = el.value; },
+  cultCalc: (el) => {
+    S.cultNeed = el.value;
+    const c = cultById(el.dataset.id), box = $('#cult-calc');
+    if (c && box) box.innerHTML = feedCalc(c, num(el.value)) || '<span class="muted">Menge eingeben.</span>';
+  },
   wtemp: (el) => { S.draft.water.temp = C.optNum(el.value); liveDraft(); },
   ice: (el) => {
     const d = S.draft, v = C.optNum(el.value);
@@ -2903,6 +3681,18 @@ const INPUTS = {
 
 const CHANGES = {
   planAt: (el) => { const t = new Date(el.value).getTime(); if (Number.isFinite(t)) { S.plan.at = t; render(); } },
+  planCult: (el) => { if (S.plan) { S.plan.cult = el.value || null; render(); } },
+  // Mehrstufiger Sauerteig: vorige Stufe als Anstellgut (Mehl-/Wasseranteil gleich so setzen, dass die vorige Stufe hineinpasst)
+  pfFrom: (el) => {
+    const d = S.draft, i = +el.dataset.i, pf = d.preferments[i];
+    pf.starterFrom = el.value;
+    if (pf.starterFrom) {
+      const prev = d.preferments.find((p) => p.id === pf.starterFrom);
+      if (prev && num(pf.flourPct) <= num(prev.flourPct)) pf.flourPct = Math.round(num(prev.flourPct) * 3 * 100) / 100;
+      pf.starterPct = 0;
+    }
+    render();
+  },
   meas: async (el) => {
     const s = sessById(el.dataset.id), st = s.steps[+el.dataset.i];
     st.meas ||= {};
@@ -2912,9 +3702,68 @@ const CHANGES = {
     if (v === '' || !Number.isFinite(+v)) { if (k === 'water' || k === 'ice') st.meas[k] = ''; else delete st.meas[k]; } else st.meas[k] = +v;
     await saveSession(s);
     const sum = $('#meas-sum');
-    if (sum) sum.innerHTML = measLabel(st.meas) || 'Temperatur notieren';
+    if (sum) sum.innerHTML = noteSum(st) || 'Notieren';
     S.measOpen = `${s.id}:${el.dataset.i}`;
     S.measDirty = true; // neu zeichnen, sobald der Fokus das Feld verlässt (Zeitplan kann sich ändern)
+  },
+  // Notiz und Foto zum laufenden Schritt (landen im Backprotokoll des Tagebuchs)
+  stepNote: async (el) => {
+    const s = sessById(el.dataset.id), st = s?.steps[+el.dataset.i];
+    if (!st) return;
+    st.note = el.value.trim().slice(0, 1000);
+    await saveSession(s);
+    const sum = $('#meas-sum');
+    if (sum) sum.innerHTML = noteSum(st) || 'Notieren';
+    S.measOpen = `${s.id}:${el.dataset.i}`;
+  },
+  stepPhoto: async (el) => {
+    const s = sessById(el.dataset.id), st = s?.steps[+el.dataset.i], f = el.files?.[0];
+    if (!st || !f) return;
+    toast('Foto wird gespeichert …');
+    try { const id = await db.addPhoto(f); st.photos = [...(st.photos || []), id]; await saveSession(s); toast('✓ Foto gespeichert'); }
+    catch (e) { toast('Foto konnte nicht gespeichert werden: ' + e.message); }
+    S.measOpen = `${s.id}:${el.dataset.i}`;
+    render();
+  },
+  // 🎨 Anpassen: neue Menge einer Zutat bzw. Ziel-Hydration
+  adj: (el) => {
+    const s = sessById(el.dataset.id);
+    if (!s) return;
+    const v = el.value.trim() === '' ? 0 : num(el.value);
+    if (!(v >= 0)) { toast('Bitte eine Menge ab 0 eingeben'); render(); return; }
+    adjSet(s, el.dataset.st, el.dataset.k, Math.round(v * 100) / 100);
+  },
+  adjHyd: (el) => {
+    const s = sessById(el.dataset.id), st = el.dataset.st, T = num(el.value);
+    if (!s || !(T > 0)) { render(); return; }
+    const c = sessCalc(s), w = stageRows(c, st, s.yeastType)?.rows.find((r) => r.key === 'water' && r.type === 'water');
+    if (!w) return;
+    const next = w.g + ((T / 100) * c.F - c.totals.water);
+    if (next < 0) { toast('Dafür müsste Wasser wieder raus – gib lieber Mehl dazu.', 4000); render(); return; }
+    adjSet(s, st, 'water', Math.round(next * 10) / 10);
+    toast(`Wasser in diesem Schritt: ${fmtG(next)}`);
+  },
+  cult: async (el) => {
+    const c = cultById(el.dataset.id), k = el.dataset.k;
+    if (!c) return;
+    if (k === 'name' || k === 'notes') c[k] = el.value.trim().slice(0, k === 'name' ? 80 : 2000);
+    else if (/^r[012]$/.test(k)) c.ratio[+k[1]] = Math.max(0, num(el.value));
+    else c[k] = Math.max(0, k === 'days' ? Math.round(num(el.value)) : num(el.value));
+    await saveCulture(c);
+    render();
+  },
+  cmpPick: (el) => {
+    const a = el.dataset.side === 'a' ? el.value : el.dataset.a, b = el.dataset.side === 'b' ? el.value : el.dataset.b;
+    location.hash = `#/cmp/${el.dataset.rid}?a=${a}&b=${b}`;
+  },
+  // Backprotokoll: tatsächliche Dauer eines Schritts korrigieren
+  protoAct: (el) => {
+    const p = S.logDraft?.protocol?.steps?.[+el.dataset.i];
+    if (!p) return;
+    const row = el.closest('.proto-edit');
+    const h = num(row.querySelector('[data-part="h"]').value), m = num(row.querySelector('[data-part="m"]').value);
+    p.act = Math.max(0, Math.round(h * 60 + m));
+    render();
   },
   // Kuchen: Zielform / Faktor (Rezeptseite oder Planer)
   cake: (el) => {
@@ -2977,13 +3826,15 @@ document.addEventListener('change', (e) => {
 });
 document.addEventListener('toggle', (e) => {
   if (e.target.dataset?.actionToggle === 'adj' && S.plan) S.plan.adjOpen = e.target.open;
+  if (e.target.dataset?.actionToggle === 'cult') S.cultOpen = e.target.open;
+  if (e.target.dataset?.actionToggle === 'fun') S.funOpen = e.target.open;
 }, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 // ---------- Start ----------
 async function reload() {
-  const [recipes, logs, sessions, settings] = await Promise.all([db.getAll('recipes'), db.getAll('logs'), db.getAll('sessions'), db.get('meta', 'settings')]);
-  S.recipes = recipes || []; S.logs = logs || []; S.sessions = sessions || [];
+  const [recipes, logs, sessions, settings, cultures] = await Promise.all([db.getAll('recipes'), db.getAll('logs'), db.getAll('sessions'), db.get('meta', 'settings'), db.getAll('cultures')]);
+  S.recipes = recipes || []; S.logs = logs || []; S.sessions = sessions || []; S.cultures = cultures || [];
   if (settings) Object.assign(S.settings, settings);
 }
 
@@ -2991,7 +3842,7 @@ async function reload() {
 // (updatedAt bleibt gleich – jedes Gerät migriert selbst, es muss nichts neu synchronisiert werden.)
 async function migrateLocal() {
   let n = 0;
-  for (const [store, list, mig] of [['recipes', S.recipes, MG.migrateRecipe], ['logs', S.logs, MG.migrateLog]]) {
+  for (const [store, list, mig] of [['recipes', S.recipes, MG.migrateRecipe], ['logs', S.logs, MG.migrateLog], ['cultures', S.cultures, MG.migrateCulture]]) {
     for (let i = 0; i < list.length; i++) {
       if (!MG.needsMigration(list[i])) continue;
       const { rec } = mig(list[i]);

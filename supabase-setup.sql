@@ -8,7 +8,7 @@
 create table if not exists public.items (
   user_id    uuid        not null default auth.uid() references auth.users (id) on delete cascade,
   id         text        not null,
-  kind       text        not null check (kind in ('recipe', 'log')),
+  kind       text        not null,
   data       jsonb,
   deleted    boolean     not null default false,
   updated_at bigint      not null,               -- Zeitpunkt der Änderung auf dem Gerät (ms)
@@ -16,8 +16,17 @@ create table if not exists public.items (
   primary key (user_id, id)
 );
 create index if not exists items_user_server_at on public.items (user_id, server_at);
+-- 1b) Erlaubte Datenarten (ab App 2.1 auch „culture“ = Meine Kulturen) – ersetzt die alte Regel
+alter table public.items drop constraint if exists items_kind_check;
+alter table public.items add constraint items_kind_check check (kind in ('recipe', 'log', 'culture'));
 
--- 2) Zugriffsschutz: Jeder sieht und ändert NUR seine eigenen Daten
+-- 2) Zugriffsrechte (neuere Supabase-Projekte vergeben diese nicht mehr automatisch)
+--    anon darf nur lesen und sieht wegen der Regeln unten trotzdem NICHTS – nötig für den Wecker.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.items to authenticated;
+grant select on public.items to anon;
+
+-- 2b) Zugriffsschutz: Jeder sieht und ändert NUR seine eigenen Daten
 alter table public.items enable row level security;
 drop policy if exists "items_select_own" on public.items;
 drop policy if exists "items_insert_own" on public.items;

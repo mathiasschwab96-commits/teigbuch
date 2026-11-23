@@ -24,9 +24,24 @@ export const PF_TYPES = {
     info: 'Levain aus Anstellgut + frischem Mehl/Wasser. Anstellgut 10–50 % vom frischen Mehl, reif nach 4–12 h.' },
   madre: { label: 'Lievito Madre', icon: '🫙', hydration: 50, flourPct: 10, yeastPct: 0, starterPct: 100, starterHydration: 50,
     info: 'Fester italienischer Sauerteig (45–50 % Hydration). Auffrischen meist 1 : 1 : 0,5 (Madre : Mehl : Wasser), reif nach 3–4 h bei 26–28 °C.' },
+  // Ab Schema 6 – weitere Vorteige (gären) …
+  dampfl: { label: 'Dampfl', icon: '🫕', hydration: 100, flourPct: 8, yeastPct: 35, starterPct: 0, liquid: 'milk',
+    info: 'Dampfl / Hefestück (Germteig): wenig Mehl mit warmer Milch, der ganzen Hefe und einer Prise Zucker verrühren. 15–30 min warm gehen lassen, bis es Blasen wirft. Die Milch wird von der Milch im Rezept abgezogen.' },
+  pate: { label: 'Pâte fermentée', icon: '🧺', hydration: 60, flourPct: 15, yeastPct: 1, starterPct: 0, saltPct: 2,
+    info: 'Altteig: ein fertiger kleiner Teig mit Salz (ca. 60 % Wasser, 1 % Hefe, 2 % Salz). 4–6 h bei Raumtemperatur oder über Nacht kalt; meist 5–25 % vom Mehl. Das Salz wird vom Hauptteig abgezogen.' },
+  // … und Vorstufen ohne Triebmittel (gären nicht, machen den Teig saftiger und länger frisch)
+  tangzhong: { label: 'Tangzhong', icon: '🍲', hydration: 500, flourPct: 5, yeastPct: 0, starterPct: 0, liquid: 'water',
+    info: 'Tangzhong / Kochstück: Mehl und Flüssigkeit 1 : 5 unter Rühren auf ca. 65 °C erhitzen, bis es puddingartig eindickt, dann abkühlen. 5–10 % vom Mehl. Mit Milch: oben „Milch“ wählen.' },
+  yudane: { label: 'Yudane', icon: '♨️', hydration: 100, flourPct: 15, yeastPct: 0, starterPct: 0, liquid: 'water',
+    info: 'Yudane / Brühstück: Mehl mit der gleichen Menge kochender Flüssigkeit übergießen und verrühren. Mindestens 4 h, besser über Nacht im Kühlschrank ruhen lassen. Meist 10–20 % vom Mehl.' },
+  quell: { label: 'Quellstück', icon: '🌱', hydration: 100, flourPct: 10, yeastPct: 0, starterPct: 0, liquid: 'water',
+    info: 'Quellstück: Schrot oder Saaten mit kaltem Wasser 1 : 1 für 10–20 h quellen lassen. Saaten zählen nicht zum Mehl – dafür „aus Saaten“ wählen; dann kommen Saaten und Quellwasser zusätzlich in den Teig.' },
   custom: { label: 'Eigener Vorteig', icon: '🥣', hydration: 70, flourPct: 20, yeastPct: 0, starterPct: 0,
-    info: 'Frei definierbar – z. B. Pâte fermentée, Roggensauer, Quellstück (ohne Hefe).' },
+    info: 'Frei definierbar – z. B. Roggensauer oder eine eigene Vorstufe. Flüssigkeit (Wasser/Milch) und Salz lassen sich einstellen.' },
 };
+// Vorteige, bei denen Milch statt Wasser sinnvoll ist bzw. Salz/Saaten vorkommen
+export const PF_LIQUID = new Set(['dampfl', 'tangzhong', 'yudane', 'poolish', 'custom']);
+export const PF_SALT = new Set(['pate', 'custom']);
 
 export const STEP_KINDS = {
   prep: { label: 'Vorteig ansetzen', icon: '🥣' },
@@ -75,6 +90,12 @@ export function panLabel(p) {
 // Ungefähres Gewicht je Stück (für „1½ Eier ≈ 80 g“)
 const PIECE_G = [[/eigelb/i, 18], [/eiwei(ß|ss)|eiklar/i, 33], [/\bei(er)?\b|vollei/i, 52]];
 export const pieceGrams = (name) => PIECE_G.find(([re]) => re.test(name || ''))?.[1] || 0;
+// Ungefähres Gewicht einer Kuchen-Zutat (g, ml ≈ g, Eier je Stück) – sonst null (EL, TL … nicht addierbar)
+export function cakeItemG(it) {
+  const u = it.unit || 'g';
+  if (u === 'g' || u === 'ml') return it.v;
+  return u === 'Stk' && pieceGrams(it.name) ? it.v * pieceGrams(it.name) : null;
+}
 
 // Kuchen-Rezept berechnen: ov.factor (direkt) oder ov.pan (Zielform) – sonst Rezept-Form
 export function calcCake(r, ov = {}) {
@@ -86,8 +107,8 @@ export function calcCake(r, ov = {}) {
   if (ov.pan && panValid(ov.pan) && panValid(base) && (base.shape === 'count') !== (ov.pan.shape === 'count')) warnings.push('Stückzahl und Backform lassen sich nicht ineinander umrechnen – es gilt die Rezeptmenge.');
   const parts = (r.parts || []).map((p) => {
     const items = (p.items || []).map((it) => {
-      const v = num(it.amount) * factor;
-      return { name: it.name, unit: it.unit || 'g', amount: num(it.amount), v, g: it.unit === 'g' || !it.unit ? v : it.unit === 'ml' ? v : it.unit === 'Stk' && pieceGrams(it.name) ? v * pieceGrams(it.name) : null };
+      const x = { name: it.name, unit: it.unit || 'g', amount: num(it.amount), v: num(it.amount) * factor };
+      return { ...x, g: cakeItemG(x) };
     });
     return { id: p.id, name: p.name, items, g: items.reduce((s, x) => s + (x.g || 0), 0) };
   });
@@ -96,7 +117,15 @@ export function calcCake(r, ov = {}) {
 }
 
 // Wasseranteil typischer flüssiger Zutaten (für die „wirksame Hydration“ bei Feingebäck)
-const LIQUID = [[/buttermilch/i, 90], [/milch|milk/i, 87], [/eigelb/i, 50], [/eiwei(ß|ss)|eiklar/i, 88], [/\bei(er)?\b|vollei/i, 75],
+// Milch erkennen – aber nicht Milchpulver (trocken)
+export const isMilkName = (n) => /milch|milk/i.test(n || '') && !/pulver|powder|trocken/i.test(n || '');
+// Die passende „Milch“-Zutat: zuerst genau „Milch“/„Vollmilch“, sonst irgendeine Milch (kein Pulver)
+export function milkIndex(list) {
+  const i = list.findIndex((e) => /^\s*(voll|frisch|h-|kuh)?milch\s*$/i.test(e.name || ''));
+  return i >= 0 ? i : list.findIndex((e) => isMilkName(e.name));
+}
+export const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+const LIQUID = [[/milchpulver|milk powder|trockenmilch/i, 3], [/buttermilch/i, 90], [/milch|milk/i, 87], [/eigelb/i, 50], [/eiwei(ß|ss)|eiklar/i, 88], [/\bei(er)?\b|vollei/i, 75],
   [/sahne|rahm/i, 60], [/butter/i, 16], [/joghurt/i, 85], [/quark|topfen/i, 80], [/honig/i, 17], [/saft|bier|wein/i, 90]];
 export const liquidShare = (name) => (LIQUID.find(([re]) => re.test(name || ''))?.[1] || 0) / 100;
 
@@ -167,8 +196,10 @@ export function calc(r, ov = {}) {
     extras: sum(r.extras || [], (e) => p(e.pct)),
     // Ab Schema 4: Ziehfett zum Tourieren (Croissant, Plunder) in % vom Mehl – gehört zum Teiggewicht
     lam: Math.max(0, p(r.lamination?.pct)),
+    // Ab Schema 6: Quellstück aus Saaten – Saaten + Quellwasser kommen ZUSÄTZLICH in den Teig (kein Mehl, keine Hydration)
+    seeds: sum(pfs.filter((pf) => pf.seeds), (pf) => p(pf.flourPct) * (1 + p(pf.hydration))),
   };
-  const S = 1 + fr.water + fr.oil + fr.salt + fr.yeast + fr.pfYeast + fr.extras + fr.lam;
+  const S = 1 + fr.water + fr.oil + fr.salt + fr.yeast + fr.pfYeast + fr.extras + fr.lam + fr.seeds;
   const loss = 1 + p(y.loss);
   let F, D, count = num(y.count);
   const pw = num(y.pieceWeight);
@@ -181,49 +212,86 @@ export function calc(r, ov = {}) {
   if (Math.abs(blendSum - 100) > 0.5) warnings.push(`Die Mehlanteile ergeben ${fmtNum(blendSum)} % statt 100 % – es wird anteilig gerechnet.`);
   const flours = blend.map((f) => ({ name: f.name || 'Mehl', total: (F * num(f.pct)) / blendSum, g: (F * num(f.pct)) / blendSum }));
 
-  const pfRes = pfs.map((pf) => {
+  // Vorteige der Reihe nach – eine Stufe kann die vorige komplett als Anstellgut nutzen (starterFrom, ab Schema 7)
+  const pfRes = [];
+  pfs.forEach((pf) => {
     const flour = F * p(pf.flourPct);
     const water = flour * p(pf.hydration);
     const yeast = flour * p(pf.yeastPct);
-    let starter = 0, sFlour = 0, sWater = 0;
-    if (num(pf.starterPct) > 0) {
+    const src = pf.starterFrom ? pfRes.find((x) => x.id === pf.starterFrom && !x.consumed) : null;
+    let starter = 0, sFlour = 0, sWater = 0, sRest = 0;
+    if (src) {
+      // Mehrstufiger Sauerteig: die ganze vorige Stufe ist das Anstellgut dieser Stufe
+      src.consumed = true;
+      starter = src.total; sFlour = src.flour; sWater = src.water; sRest = src.total - src.flour - src.water;
+      if (flour < sFlour - 0.5) warnings.push(`„${pf.name || 'Vorteig'}“ enthält weniger Mehl als die vorige Stufe „${src.pf.name || 'Vorteig'}“ – Mehlanteil erhöhen.`);
+    } else if (num(pf.starterPct) > 0) {
       const i = p(pf.starterPct), hS = p(pf.starterHydration ?? 100);
       const fresh = flour / (1 + i / (1 + hS));
       starter = fresh * i; sFlour = starter / (1 + hS); sWater = starter - sFlour;
     }
-    const target = flours.find((f) => f.name === pf.flourName) || flours[0];
-    target.g -= flour;
-    return { id: pf.id, pf, flourName: target.name, flour, water, yeast, starter, freshFlour: flour - sFlour, freshWater: water - sWater, total: flour + water + yeast };
+    // Salz im Vorteig (Pâte fermentée) – wird vom Salz im Hauptteig abgezogen
+    const pfSalt = flour * p(pf.saltPct);
+    // Flüssigkeit: Wasser, Milch oder gemischt (milkShare = Milch-Anteil der frisch zugegebenen Flüssigkeit)
+    const share = pf.liquid === 'milk' ? 1 : pf.liquid === 'mix' ? Math.min(1, Math.max(0, p(pf.milkShare))) : 0;
+    const freshWater = water - sWater;
+    const milkG = Math.max(0, freshWater) * share;
+    // Zutaten, die schon in diesen Vorteig kommen (z. B. Zucker, Butter, Eigelb beim Panettone) – % vom Gesamtmehl
+    const pfExtras = (pf.extras || []).map((e) => ({ name: e.name, pct: num(e.pct), g: F * p(e.pct) })).filter((e) => e.g > 0);
+    const exG = sum(pfExtras, (e) => e.g);
+    pfRes.push({ id: pf.id, pf, flourName: pf.seeds ? (pf.flourName || 'Saaten') : '', flour, water, yeast, starter, salt: pfSalt, seeds: !!pf.seeds,
+      milk: share > 0, milkG, waterG: freshWater - milkG + (src ? 0 : sWater), chained: !!src, src: src?.id || '', extras: pfExtras,
+      freshFlour: flour - sFlour, freshWater, total: flour + water + yeast + pfSalt + exG + sRest });
+  });
+  // Mehl abziehen: nur Vorteige, die in den Hauptteig kommen (eine verbrauchte Stufe steckt schon in der nächsten)
+  pfRes.forEach((x) => {
+    if (x.seeds) return;
+    const target = flours.find((f) => f.name === x.pf.flourName) || flours[0];
+    x.flourName = target.name;
+    if (!x.consumed) target.g -= x.flour;
   });
   flours.forEach((f) => { if (f.g < -0.5) warnings.push(`Die Vorteige brauchen mehr „${f.name}“ als im Rezept vorgesehen.`); });
-  const pfFlourPct = sum(pfs, (pf) => num(pf.flourPct));
+  const pfFlourPct = sum(pfRes.filter((x) => !x.seeds && !x.consumed), (x) => num(x.pf.flourPct));
   if (pfFlourPct > 100.01) warnings.push(`Die Vorteige enthalten zusammen ${fmtNum(pfFlourPct)} % des Mehls – mehr als 100 % geht nicht.`);
 
   const totalWater = F * fr.water;
-  const pfWater = sum(pfRes, (x) => x.water);
+  // Wasser in Vorteigen geht vom Hauptteig-Wasser ab; Milch von der Milch im Rezept; Saaten-Quellwasser kommt dazu
+  const pfWater = sum(pfRes.filter((x) => !x.seeds), (x) => x.waterG);
   const mainWater = totalWater - pfWater;
   if (mainWater < -0.5) warnings.push('Die Vorteige enthalten mehr Wasser als die Gesamthydration erlaubt – Hydration erhöhen oder Vorteig-Hydration senken.');
-  const oil = F * fr.oil, salt = F * fr.salt, yeastMain = F * fr.yeast;
-  const extras = (r.extras || []).map((e) => ({ name: e.name, pct: num(e.pct), g: F * p(e.pct) }));
+  const oil = F * fr.oil, yeastMain = F * fr.yeast;
+  const pfSaltSum = sum(pfRes, (x) => x.salt);
+  const salt = F * fr.salt - pfSaltSum;
+  if (salt < -0.05) warnings.push('Im Vorteig ist mehr Salz als im ganzen Rezept – Salz im Rezept erhöhen.');
+  // Zutaten-Liste = Gesamtmenge; was schon in Vorteigen steckt, wird für den Hauptteig abgezogen
+  const extras = (r.extras || []).map((e) => ({ name: e.name, pct: num(e.pct), g: F * p(e.pct), total: F * p(e.pct) }));
+  const take = (idx, g, what) => {
+    if (idx < 0 || extras[idx].g < g - 0.5) warnings.push(`${what}: ${fmtNum(g, 0)} g im Vorteig, im Rezept ${idx < 0 ? 'keine' : `nur noch ${fmtNum(extras[idx].g, 0)} g`} – unter „Salz, Hefe & Co.“ die Gesamtmenge eintragen.`);
+    if (idx >= 0) extras[idx].g = Math.max(0, extras[idx].g - g);
+  };
+  const pfMilk = sum(pfRes.filter((x) => !x.seeds), (x) => x.milkG);
+  if (pfMilk > 0.05) take(milkIndex(extras), pfMilk, 'Milch');
+  pfRes.forEach((x) => x.extras.forEach((e) => take(extras.findIndex((m) => sameName(m.name, e.name)), e.g, e.name || 'Zutat')));
   // Optional (ab Schema 3): Wassertemperatur und Eis-Anteil des Hauptteig-Wassers – ändert die Hydration nicht
   const waterTemp = optNum(r.water?.temp);
   const icePct = Math.min(100, Math.max(0, num(r.water?.icePct)));
   const ice = Math.max(0, mainWater) * icePct / 100;
   const lamG = F * fr.lam;
   // Wirksame Flüssigkeit: Wasser + Wasseranteil von Milch, Ei, Butter … (nur Anzeige, ändert nichts an den Mengen)
-  const liquid = totalWater + sum(extras, (e) => e.g * liquidShare(e.name));
+  const liquid = totalWater + sum(extras, (e) => e.total * liquidShare(e.name));
+  const seedsG = sum(pfRes.filter((x) => x.seeds), (x) => x.flour + x.water);
 
   return {
     F, D, count, pieceWeight: pw, mode: y.mode, warnings,
     pfs: pfRes,
-    main: { flours: flours.map((f) => ({ name: f.name, g: f.g })), water: mainWater, oil, salt, yeast: yeastMain, extras, waterTemp, ice, icePct },
+    main: { flours: flours.map((f) => ({ name: f.name, g: f.g })), water: mainWater, oil, salt: Math.max(0, salt), yeast: yeastMain, extras, waterTemp, ice, icePct },
     lam: { g: lamG, pct: fr.lam * 100, name: (r.lamination?.name || '').trim() || 'Butter', base: D - lamG },
     totals: {
-      flour: F, water: totalWater, oil, salt, dough: D, lam: lamG,
+      flour: F, water: totalWater, oil, salt: F * fr.salt, dough: D, lam: lamG, seeds: seedsG,
       liquid, hydEff: F > 0 ? (liquid / F) * 100 : 0,
       yeast: yeastMain + sum(pfRes, (x) => x.yeast),
       starter: sum(pfRes, (x) => x.starter),
-      extras: sum(extras, (e) => e.g),
+      extras: sum(extras, (e) => e.total),
       hydration: waterPct,
       hydrationOil: F > 0 ? ((totalWater + oil) / F) * 100 : 0,
       pfFlourPct,
@@ -249,14 +317,21 @@ export function waterTemp({ ddt, room, flour, pf, friction, hasPf }) {
 }
 
 // ---------- Zeitplanung ----------
-// Schritte laufen nacheinander; "parallel" startet gleichzeitig mit dem vorherigen Schritt.
+// Schritte laufen nacheinander; "parallel" läuft nebenher zum vorherigen Schritt:
+//   align ''    → startet gleichzeitig mit ihm („Zusammen starten“)
+//   align 'end' → endet gleichzeitig mit ihm („Zusammen fertig“, z. B. Ofen vorheizen während der Stückgare)
 // now: für laufende Backvorgänge – nicht erledigte, überfällige Schritte gelten als "jetzt fertig".
 export function timeline(steps, startAt, now = -Infinity) {
   const out = [];
   let maxFinish = startAt;
   (steps || []).forEach((s, i) => {
-    const start = i === 0 ? startAt : s.parallel ? out[i - 1].start : maxFinish;
-    const end = start + num(s.durationMin) * 60000;
+    const dur = num(s.durationMin) * 60000;
+    const prev = out[i - 1];
+    const start = i === 0 ? startAt : !s.parallel ? maxFinish
+      // „Zusammen fertig“: richtet sich nach dem tatsächlichen Ende, falls der vorherige Schritt früher erledigt wurde
+      // Wird der vorige Schritt früher erledigt, startet ein noch nicht begonnener Nebenher-Schritt erst dann (Ofen braucht seine Zeit)
+      : s.align === 'end' ? Math.max(startAt, Math.min(prev.end - dur, prev.doneAt ?? Infinity)) : prev.start;
+    const end = start + dur;
     const finish = s.doneAt ?? Math.max(end, now);
     maxFinish = i === 0 ? finish : Math.max(maxFinish, finish);
     out.push({ ...s, i, start, end, finish });
@@ -337,9 +412,75 @@ function keepUnknown(src, known) {
   return out;
 }
 const R_KEYS = ['v', 'id', 'name', 'category', 'description', 'source', 'tags', 'favorite', 'photos', 'cover', 'yield', 'flours', 'water', 'oil', 'salt', 'yeastType', 'yeastPct', 'extras', 'preferments', 'steps', 'ddt', 'notes', 'createdAt', 'updatedAt', 'lamination', 'pan', 'parts'];
-const PF_KEYS = ['id', 'type', 'name', 'flourPct', 'hydration', 'yeastPct', 'starterPct', 'starterHydration', 'flourName'];
-const ST_KEYS = ['id', 'kind', 'name', 'durationMin', 'location', 'temp', 'notes', 'parallel', 'stage', 'repeat'];
-const L_KEYS = ['v', 'id', 'recipeId', 'date', 'rating', 'sub', 'params', 'roomTemp', 'doughTemp', 'fridgeTemp', 'waterTemp', 'iceG', 'oven', 'bakeTemp', 'bakeTime', 'notes', 'nextTime', 'photos', 'sessionId', 'createdAt', 'updatedAt'];
+const PF_KEYS = ['id', 'type', 'name', 'flourPct', 'hydration', 'yeastPct', 'starterPct', 'starterHydration', 'flourName', 'liquid', 'saltPct', 'seeds', 'milkShare', 'extras', 'starterFrom'];
+const ST_KEYS = ['id', 'kind', 'name', 'durationMin', 'location', 'temp', 'notes', 'parallel', 'align', 'stage', 'repeat'];
+const L_KEYS = ['v', 'id', 'recipeId', 'date', 'rating', 'sub', 'params', 'roomTemp', 'doughTemp', 'fridgeTemp', 'waterTemp', 'iceG', 'oven', 'bakeTemp', 'bakeTime', 'notes', 'nextTime', 'photos', 'sessionId', 'createdAt', 'updatedAt', 'protocol'];
+
+// ---------- Meine Kulturen (ab Schema 6): Anstellgut & Co., die gefüttert werden ----------
+// ratio = Anstellgut : Mehl : Wasser; lead = Stunden vor dem Backtag fürs Auffrischen
+export const CULTURE_TYPES = {
+  rye: { label: 'Roggensauer', icon: '🌾', ratio: [1, 5, 5], hydration: 100, days: 7, place: 'fridge', lead: 12 },
+  wheat: { label: 'Weizensauer / Levain', icon: '🌾', ratio: [1, 2, 2], hydration: 100, days: 7, place: 'fridge', lead: 8 },
+  spelt: { label: 'Dinkelsauer', icon: '🌾', ratio: [1, 3, 3], hydration: 100, days: 7, place: 'fridge', lead: 8 },
+  madre: { label: 'Lievito Madre', icon: '🫙', ratio: [1, 1, 0.45], hydration: 45, days: 5, place: 'fridge', lead: 4 },
+  licoli: { label: 'LiCoLi (flüssige Madre)', icon: '🫙', ratio: [1, 1, 1], hydration: 100, days: 7, place: 'fridge', lead: 6 },
+  yeastwater: { label: 'Hefewasser', icon: '🍏', ratio: [0, 0, 0], hydration: 0, days: 3, place: 'rt', lead: 24 },
+  custom: { label: 'Eigene Kultur', icon: '🧫', ratio: [1, 1, 1], hydration: 100, days: 7, place: 'fridge', lead: 8 },
+};
+const C_KEYS = ['v', 'id', 'name', 'type', 'ratio', 'hydration', 'days', 'place', 'lead', 'notes', 'feeds', 'createdAt', 'updatedAt'];
+export function sanitizeCulture(c) {
+  const t = Object.prototype.hasOwnProperty.call(CULTURE_TYPES, c?.type) ? c.type : 'custom';
+  return {
+    ...keepUnknown(c, C_KEYS),
+    v: Math.max(1, Math.floor(num(c?.v)) || 1), id: safeId(c?.id) || uid(), name: str(c?.name, 80), type: t,
+    ratio: [0, 1, 2].map((i) => Math.max(0, num(arr(c?.ratio)[i]))), hydration: Math.max(0, num(c?.hydration)),
+    days: Math.max(0, Math.round(num(c?.days))), place: c?.place === 'rt' ? 'rt' : 'fridge', lead: Math.max(0, num(c?.lead)),
+    notes: str(c?.notes, 2000),
+    feeds: arr(c?.feeds).slice(-200).map((f) => ({ ...keepUnknown(f, ['at', 'g', 'temp', 'rise', 'note']), at: num(f?.at), g: str(f?.g, 60), temp: optN(f?.temp), rise: optN(f?.rise), note: str(f?.note, 300) })).filter((f) => f.at > 0),
+    createdAt: num(c?.createdAt) || Date.now(), updatedAt: num(c?.updatedAt) || Date.now(),
+  };
+}
+
+// Teiggefühl (Backprotokoll, ab Schema 5)
+export const FEELS = { firm: 'zu fest', ok: 'passt', soft: 'zu weich', sticky: 'klebrig' };
+const arr = (v) => (Array.isArray(v) ? v : []);
+const optN = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const MEAS_KEYS = ['dough', 'room', 'fridge', 'water', 'ice'];
+// Prozentwerte eines Backtags (zum Übernehmen ins Rezept bzw. als Variante)
+function sanitizePct(p) {
+  if (!p || typeof p !== 'object') return null;
+  return {
+    ...keepUnknown(p, ['water', 'salt', 'yeast', 'oil', 'lam', 'flours', 'extras', 'pfs', 'cake']),
+    water: num(p.water), salt: num(p.salt), yeast: num(p.yeast), oil: num(p.oil), lam: num(p.lam),
+    flours: arr(p.flours).slice(0, 20).map((f) => ({ name: str(f?.name, 80), pct: num(f?.pct) })),
+    extras: arr(p.extras).slice(0, 40).map((e) => ({ name: str(e?.name, 80), pct: num(e?.pct) })),
+    pfs: arr(p.pfs).slice(0, 8).map((x) => ({ ...keepUnknown(x, ['id', 'flourPct', 'hydration', 'starterPct', 'yeastPct', 'saltPct']), id: safeId(x?.id), flourPct: num(x?.flourPct), hydration: num(x?.hydration), starterPct: num(x?.starterPct), yeastPct: num(x?.yeastPct), saltPct: num(x?.saltPct) })),
+    cake: arr(p.cake).slice(0, 30).map((pt) => ({ id: safeId(pt?.id), items: arr(pt?.items).slice(0, 100).map((it) => ({ name: str(it?.name, 80), amount: Math.max(0, num(it?.amount)), unit: UNITS.includes(it?.unit) ? it.unit : 'g' })) })),
+  };
+}
+// Backprotokoll eines Tagebuch-Eintrags: Schritte (geplant/tatsächlich), Notizen, Fotos, Teiggefühl, Anpassungen, Mengen
+export function sanitizeProtocol(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+  return {
+    ...keepUnknown(p, ['startAt', 'endAt', 'hydration', 'baseHydration', 'dough', 'steps', 'blocks', 'changes', 'pct']),
+    startAt: optN(p.startAt), endAt: optN(p.endAt), hydration: optN(p.hydration), baseHydration: optN(p.baseHydration), dough: optN(p.dough),
+    steps: arr(p.steps).slice(0, 80).map((s) => {
+      const meas = {};
+      MEAS_KEYS.forEach((k) => { const v = optN(s?.meas?.[k]); if (v !== null) meas[k] = v; });
+      return {
+        ...keepUnknown(s, ['name', 'kind', 'loc', 'plan', 'act', 'start', 'end', 'par', 'temp', 'stage', 'note', 'feel', 'photos', 'meas', 'shift', 'comp']),
+        name: str(s?.name, 120), kind: pick(s?.kind, STEP_KINDS, 'other'), loc: pick(s?.loc, LOCATIONS, 'rt'),
+        plan: optN(s?.plan), act: optN(s?.act), start: optN(s?.start), end: optN(s?.end),
+        par: s?.par === 'end' || s?.par === 'start' ? s.par : '', temp: str(s?.temp, 40), stage: str(s?.stage, 80),
+        note: str(s?.note, 1000), feel: Object.prototype.hasOwnProperty.call(FEELS, s?.feel) ? s.feel : '',
+        photos: arr(s?.photos).map(safeId).filter(Boolean).slice(0, 20), meas, shift: optN(s?.shift), comp: optN(s?.comp),
+      };
+    }),
+    blocks: arr(p.blocks).slice(0, 30).map((b) => ({ title: str(b?.title, 80), rows: arr(b?.rows).slice(0, 80).map((x) => ({ name: str(x?.name, 80), txt: str(x?.txt, 40), was: str(x?.was, 40) })) })),
+    changes: arr(p.changes).slice(0, 60).map((c) => ({ stage: str(c?.stage, 80), name: str(c?.name, 80), from: str(c?.from, 40), to: str(c?.to, 40) })),
+    pct: sanitizePct(p.pct),
+  };
+}
 
 export function sanitizeRecipe(r) {
   const pfIds = new Map();
@@ -347,7 +488,18 @@ export function sanitizeRecipe(r) {
     const id = safeId(pf.id) || uid();
     pfIds.set(pf.id, id);
     return { ...keepUnknown(pf, PF_KEYS), id, type: pick(pf.type, PF_TYPES, 'custom'), name: str(pf.name, 80), flourPct: num(pf.flourPct), hydration: num(pf.hydration),
-      yeastPct: num(pf.yeastPct), starterPct: num(pf.starterPct), starterHydration: num(pf.starterHydration ?? 100), flourName: str(pf.flourName, 80) };
+      yeastPct: num(pf.yeastPct), starterPct: num(pf.starterPct), starterHydration: num(pf.starterHydration ?? 100), flourName: str(pf.flourName, 80),
+      // Ab Schema 6: Flüssigkeit (Wasser/Milch), Salz im Vorteig, Quellstück aus Saaten
+      liquid: pf.liquid === 'milk' || pf.liquid === 'mix' ? pf.liquid : 'water', saltPct: Math.max(0, num(pf.saltPct)), seeds: !!pf.seeds,
+      // Ab Schema 7: Milch-Anteil bei gemischter Flüssigkeit, Zutaten im Vorteig, vorige Stufe als Anstellgut
+      milkShare: Math.min(100, Math.max(0, num(pf.milkShare))),
+      extras: (Array.isArray(pf.extras) ? pf.extras : []).slice(0, 20).map((e) => ({ name: str(e?.name, 80), pct: Math.max(0, num(e?.pct)) })),
+      starterFrom: str(pf.starterFrom, 48) };
+  });
+  // starterFrom muss auf eine FRÜHERE Stufe zeigen (neue IDs übernehmen, sonst leeren)
+  preferments.forEach((pf, i) => {
+    const id = pfIds.get(pf.starterFrom) || safeId(pf.starterFrom);
+    pf.starterFrom = id && preferments.slice(0, i).some((x) => x.id === id) ? id : '';
   });
   // Kuchen & Torten (ab Schema 4): Bestandteile (Teig, Füllung, Creme …) mit Zutaten in beliebigen Einheiten
   const partIds = new Map();
@@ -362,6 +514,7 @@ export function sanitizeRecipe(r) {
     ...keepUnknown(s, ST_KEYS),
     id: safeId(s.id) || uid(), kind: pick(s.kind, STEP_KINDS, 'other'), name: str(s.name, 120), durationMin: Math.max(0, num(s.durationMin)),
     location: pick(s.location, LOCATIONS, 'rt'), temp: str(s.temp, 40), notes: str(s.notes, 2000), parallel: !!s.parallel,
+    align: s.parallel && s.align === 'end' ? 'end' : '',
     stage: s.stage === 'main' || s.stage === 'lam' ? s.stage : pfIds.get(s.stage) || partIds.get(s.stage) || null,
     repeat: s.repeat && num(s.repeat.count) > 0 ? { count: Math.round(num(s.repeat.count)), intervalMin: Math.max(1, num(s.repeat.intervalMin)) } : null,
   }));
@@ -404,19 +557,46 @@ export function sanitizeLog(l) {
     roomTemp: str(l.roomTemp, 10), doughTemp: str(l.doughTemp, 10), fridgeTemp: str(l.fridgeTemp, 10), waterTemp: str(l.waterTemp, 10), iceG: str(l.iceG, 10), oven: str(l.oven, 80),
     bakeTemp: str(l.bakeTemp, 10), bakeTime: str(l.bakeTime, 40), notes: str(l.notes, 4000), nextTime: str(l.nextTime, 1000),
     photos: (Array.isArray(l.photos) ? l.photos : []).map(safeId).filter(Boolean), sessionId: safeId(l.sessionId) || null,
+    protocol: sanitizeProtocol(l.protocol),
     createdAt: num(l.createdAt) || Date.now(), updatedAt: num(l.updatedAt) || 0,
   };
 }
 
 // ---------- Vorlagen ----------
 export const step = (kind, name, durationMin, location = 'rt', extra = {}) => ({
-  id: uid(), kind, name, durationMin, location, temp: '', stage: null, notes: '', parallel: false, repeat: null, ...extra,
+  id: uid(), kind, name, durationMin, location, temp: '', stage: null, notes: '', parallel: false, align: '', repeat: null, ...extra,
 });
+// „Ofen vorheizen“ nebenher, damit der Ofen genau zum Ende des vorherigen Schritts heiß ist
+const NEBENHER = { parallel: true, align: 'end' };
+
+// Prozentwerte eines Backtags (Backprotokoll) in ein Rezept übernehmen – für „Ins Rezept“ / „Als Variante“
+export function applyPct(r, pct) {
+  if (!pct) return r;
+  const rd = (v, d = 4) => Math.round(num(v) * 10 ** d) / 10 ** d;
+  if (isCake(r)) {
+    (pct.cake || []).forEach((pp) => { const p = (r.parts || []).find((x) => x.id === pp.id); if (p) p.items = pp.items.map((it) => ({ ...it })); });
+    return r;
+  }
+  r.water = { ...r.water, pct: rd(pct.water, 2) };
+  r.salt = rd(pct.salt); r.yeastPct = rd(pct.yeast); r.oil = { ...r.oil, pct: rd(pct.oil) };
+  if ((pct.flours || []).length) r.flours = pct.flours.map((f) => ({ name: f.name, pct: rd(f.pct, 2) }));
+  r.extras = (pct.extras || []).map((e) => ({ name: e.name, pct: rd(e.pct) }));
+  (pct.pfs || []).forEach((x) => {
+    const pf = (r.preferments || []).find((p) => p.id === x.id);
+    if (!pf) return;
+    Object.assign(pf, { flourPct: rd(x.flourPct), hydration: rd(x.hydration, 2), yeastPct: rd(x.yeastPct) });
+    if (!pf.starterFrom) pf.starterPct = rd(x.starterPct, 2);
+    if (x.saltPct !== undefined) pf.saltPct = rd(x.saltPct, 2);
+  });
+  r.lamination = { ...(r.lamination || {}), pct: rd(pct.lam, 2) };
+  return r;
+}
 
 export function makePf(type, extra = {}) {
   const t = PF_TYPES[type] || PF_TYPES.custom;
   return { id: uid(), type, name: t.label, flourPct: t.flourPct, hydration: t.hydration, yeastPct: t.yeastPct,
-    starterPct: t.starterPct || 0, starterHydration: t.starterHydration || 100, flourName: '', ...extra };
+    starterPct: t.starterPct || 0, starterHydration: t.starterHydration || 100, flourName: '',
+    liquid: t.liquid || 'water', saltPct: t.saltPct || 0, seeds: false, milkShare: 0, extras: [], starterFrom: '', ...extra };
 }
 
 export function blankRecipe(category = 'pizza') {
@@ -447,6 +627,12 @@ function pfChain(pf) {
   if (pf.type === 'poolish') return { nm, prep: step('prep', `${nm} ansetzen`, 10, 'rt', st), rest: [step('rest', `${nm} anspringen lassen`, 60, 'rt', st), step('rest', `${nm} reifen`, 960, 'fridge', st)] };
   if (pf.type === 'levain') return { nm, prep: step('prep', `${nm} ansetzen`, 5, 'rt', { ...st, notes: 'Anstellgut mit Mehl und warmem Wasser verrühren.' }), rest: [step('rest', `${nm} reifen`, 480, 'warm', { ...st, temp: '26 °C', notes: 'Reif, wenn verdoppelt und gewölbt.' })] };
   if (pf.type === 'madre') return { nm, prep: step('prep', `${nm} auffrischen`, 10, 'rt', { ...st, notes: 'Madre mit Mehl und Wasser fest verkneten, zur Kugel formen, kreuzweise einschneiden.' }), rest: [step('rest', `${nm} reifen`, 240, 'warm', { ...st, temp: '26–28 °C', notes: 'Reif, wenn sich das Volumen verdoppelt hat.' })] };
+  const liq = pf.liquid === 'milk' ? 'Milch' : 'Wasser';
+  if (pf.type === 'dampfl') return { nm, prep: step('prep', `${nm} ansetzen`, 5, 'rt', { ...st, notes: `Hefe in lauwarmer ${liq} (ca. 30 °C) auflösen, eine Prise Zucker und das Mehl einrühren.` }), rest: [step('rest', `${nm} gehen lassen`, 20, 'warm', { ...st, temp: '26–30 °C', notes: 'Fertig, wenn es Blasen wirft bzw. sich sichtbar vergrößert hat.' })] };
+  if (pf.type === 'pate') return { nm, prep: step('prep', `${nm} kneten`, 10, 'rt', { ...st, notes: 'Mehl, Wasser, Hefe und Salz zu einem glatten Teig kneten.' }), rest: [step('rest', `${nm} anspringen lassen`, 60, 'rt', st), step('rest', `${nm} reifen`, 720, 'fridge', st)] };
+  if (pf.type === 'tangzhong') return { nm, prep: step('prep', `${nm} kochen`, 5, 'rt', { ...st, temp: 'ca. 65 °C', notes: `Mehl und ${liq} glatt rühren und unter ständigem Rühren erhitzen, bis es puddingartig eindickt (ca. 65 °C).` }), rest: [step('rest', `${nm} abkühlen`, 60, 'rt', { ...st, notes: 'Folie direkt auf die Oberfläche legen, damit keine Haut entsteht.' })] };
+  if (pf.type === 'yudane') return { nm, prep: step('prep', `${nm} überbrühen`, 5, 'rt', { ...st, notes: `Mehl mit kochender ${liq} übergießen und zügig verrühren.` }), rest: [step('rest', `${nm} ruhen lassen`, 720, 'fridge', { ...st, notes: 'Mindestens 4 h, besser über Nacht.' })] };
+  if (pf.type === 'quell') return { nm, prep: step('prep', `${nm} ansetzen`, 5, 'rt', { ...st, notes: pf.seeds ? 'Saaten mit kaltem Wasser übergießen, abdecken.' : 'Schrot mit kaltem Wasser verrühren, abdecken.' }), rest: [step('rest', `${nm} quellen lassen`, 720, 'rt', st)] };
   return { nm, prep: step('prep', `${nm} ansetzen`, 10, 'rt', st), rest: [step('rest', `${nm} reifen`, 720, 'rt', st)] };
 }
 
@@ -479,7 +665,7 @@ export function suggestSteps(r) {
       step('bulk', 'Stockgare mit Dehnen & Falten', 240, 'rt', { temp: '24–26 °C', repeat: { count: 4, intervalMin: 30 } }),
       step('shape', 'Formen', 15, 'rt'),
       step('proof', 'Stückgare (kalt)', 840, 'fridge'),
-      step('preheat', 'Ofen + Topf vorheizen', 45, 'oven', { temp: '250 °C' }),
+      step('preheat', 'Ofen + Topf vorheizen', 45, 'oven', { temp: '250 °C', ...NEBENHER }),
       step('bake', 'Brot backen', 45, 'oven', { temp: '250 → 230 °C' }),
       step('cool', 'Auskühlen', 90, 'rt'),
     );
@@ -511,11 +697,13 @@ function suggestFine(r) {
       step('rest', 'Kühlen', 60, 'fridge'),
       step('shape', 'Ausrollen & formen', 30, 'rt'),
       step('proof', 'Stückgare', 120, 'warm', { temp: '26 °C', notes: 'Nicht über 27 °C – sonst läuft die Butter aus.' }),
+      step('preheat', 'Ofen vorheizen', 20, 'oven', { temp: '190 °C', ...NEBENHER }),
       step('bake', 'Backen', 18, 'oven', { temp: '190 °C' }),
     );
   } else {
     out.push(step('bulk', 'Stockgare', 60, 'warm', { temp: '26 °C' }), step('shape', 'Formen', 20, 'rt'),
-      step('proof', 'Stückgare', 60, 'warm', { temp: '28 °C' }), step('bake', 'Backen', 30, 'oven', { temp: '180 °C' }));
+      step('proof', 'Stückgare', 60, 'warm', { temp: '28 °C' }), step('preheat', 'Ofen vorheizen', 20, 'oven', { temp: '180 °C', ...NEBENHER }),
+      step('bake', 'Backen', 30, 'oven', { temp: '180 °C' }));
   }
   out.push(step('cool', 'Auskühlen', 30, 'rt'));
   return out;
@@ -626,7 +814,7 @@ export const TEMPLATES = [
         step('rest', 'Teigruhe', 20, 'rt'),
         step('shape', 'Formen & ins Gärkörbchen', 10, 'rt'),
         step('proof', 'Stückgare (kalt)', 840, 'fridge'),
-        step('preheat', 'Ofen + Topf vorheizen', 45, 'oven', { temp: '250 °C' }),
+        step('preheat', 'Ofen + Topf vorheizen', 45, 'oven', { temp: '250 °C', ...NEBENHER }),
         step('bake', 'Brot backen', 45, 'oven', { temp: '250 → 230 °C', notes: '20 min mit Deckel, 25 min ohne. Kerntemperatur ≥ 96 °C.' }),
         step('cool', 'Auskühlen', 90, 'rt', { notes: 'Erst anschneiden, wenn ausgekühlt.' }),
       ];
@@ -654,7 +842,8 @@ export const TEMPLATES = [
         step('rest', 'Kühlen', 60, 'fridge'),
         step('shape', 'Ausrollen, schneiden & formen', 30, 'rt', { notes: 'Auf ca. 4 mm ausrollen, Dreiecke (ca. 9 × 25 cm) schneiden und locker aufrollen.' }),
         step('proof', 'Stückgare', 120, 'warm', { temp: '26 °C', notes: 'Nicht über 27 °C – sonst läuft die Butter aus. Fertig, wenn sie deutlich gewachsen sind und leicht wackeln.' }),
-        step('bake', 'Backen', 18, 'oven', { temp: '190 °C', notes: 'Mit verquirltem Ei abstreichen. Ofen rechtzeitig vorheizen.' }),
+        step('preheat', 'Ofen vorheizen', 20, 'oven', { temp: '190 °C', ...NEBENHER }),
+        step('bake', 'Backen', 18, 'oven', { temp: '190 °C', notes: 'Mit verquirltem Ei abstreichen.' }),
         step('cool', 'Auskühlen', 30, 'rt'),
       ];
       return r;
@@ -698,6 +887,7 @@ export const TEMPLATES = [
         step('rest', 'Über Nacht kühlen', 720, 'fridge', { notes: 'Kalter Teig lässt sich viel besser formen.' }),
         step('shape', 'Formen', 20, 'rt', { notes: 'Je 6 Kugeln in die gefettete Kastenform setzen.' }),
         step('proof', 'Stückgare', 150, 'warm', { temp: '26 °C' }),
+        step('preheat', 'Ofen vorheizen', 20, 'oven', { temp: '180 °C', ...NEBENHER }),
         step('bake', 'Backen', 30, 'oven', { temp: '180 °C', notes: 'Mit Ei abstreichen. Kerntemperatur ca. 90 °C.' }),
         step('cool', 'Auskühlen', 60, 'rt'),
       ];

@@ -21,9 +21,19 @@
 //               Rezept lamination {pct, name} (Ziehfett, 0 = keins), pan {shape, d, l, w, n} (Backform, '' = keine Angabe),
 //               parts [{id, name, items:[{name, amount, unit}]}] (nur Kuchen); Schritt-Arten „laminate“, „assemble“;
 //               Tagebuch params.pan (Form als Text). Ältere Rezepte hatten nichts davon → leer/0, keine Rückfrage nötig.
-import { num, sanitizeRecipe, sanitizeLog, CATEGORIES, isCake } from './calc.js';
+//   5  App 2.0 – Schritt „align“ ('' = zusammen starten wie bisher, 'end' = zusammen fertig) für parallele Schritte;
+//               Tagebuch „protocol“ (Backprotokoll: Schritte geplant/tatsächlich, Notizen, Fotos, Teiggefühl,
+//               Anpassungen, Mengen). Ältere Einträge haben kein Protokoll (null) – es wird nichts erfunden.
+//   6  App 2.1 – Vorteige: liquid ('water' | 'milk'), saltPct (Salz im Vorteig), seeds (Quellstück aus Saaten);
+//               neue Vorteig-Arten dampfl, pate, tangzhong, yudane, quell. Bisherige Vorteige waren immer
+//               Wasser ohne Salz und ohne Saaten → eindeutig, keine Rückfrage.
+//               Neu: „Meine Kulturen“ (eigene Datenart, Sicherung „cultures“, Sync kind 'culture').
+//   7  App 2.2 – Vorteige: liquid 'mix' + milkShare (Wasser/Milch gemischt), extras [{name, pct}] (Zutaten im Vorteig,
+//               z. B. Zucker/Butter/Eigelb beim Panettone), starterFrom (mehrstufiger Sauerteig: vorige Stufe als Anstellgut).
+//               Bisher gab es nichts davon → leer, keine Rückfrage.
+import { num, sanitizeRecipe, sanitizeLog, sanitizeCulture, CATEGORIES, isCake } from './calc.js';
 
-export const SCHEMA = 4;
+export const SCHEMA = 7;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -47,6 +57,23 @@ const RECIPE_MIGRATIONS = {
     if (r.parts === undefined) r.parts = [];
     return r;
   },
+  // 4 → 5: parallele Schritte starteten bisher immer gleichzeitig mit dem vorherigen → align '' (eindeutig, keine Rückfrage)
+  4: (r) => {
+    r.steps = (Array.isArray(r.steps) ? r.steps : []).map((s) => (s && s.align === undefined ? { ...s, align: '' } : s));
+    return r;
+  },
+  // 5 → 6: Vorteige waren bisher immer mit Wasser, ohne Salz, ohne Saaten
+  5: (r) => {
+    r.preferments = (Array.isArray(r.preferments) ? r.preferments : []).map((pf) => (pf && typeof pf === 'object'
+      ? { ...pf, liquid: pf.liquid ?? 'water', saltPct: pf.saltPct ?? 0, seeds: pf.seeds ?? false } : pf));
+    return r;
+  },
+  // 6 → 7: keine Mischflüssigkeit, keine Zutaten im Vorteig, keine Stufen-Kette
+  6: (r) => {
+    r.preferments = (Array.isArray(r.preferments) ? r.preferments : []).map((pf) => (pf && typeof pf === 'object'
+      ? { ...pf, milkShare: pf.milkShare ?? 0, extras: pf.extras ?? [], starterFrom: pf.starterFrom ?? '' } : pf));
+    return r;
+  },
 };
 
 const LOG_MIGRATIONS = {
@@ -56,6 +83,11 @@ const LOG_MIGRATIONS = {
   2: (l) => ({ ...l, waterTemp: l.waterTemp ?? '', iceG: l.iceG ?? '' }),
   // 3 → 4: optionale Backform (nur Kuchen)
   3: (l) => ({ ...l, params: { ...(l.params || {}), pan: l.params?.pan ?? '' } }),
+  // 4 → 5: Backprotokoll gab es noch nicht → null (kann bei vorhandenem Backvorgang später übernommen werden)
+  4: (l) => ({ ...l, protocol: l.protocol ?? null }),
+  // 5 → 6 und 6 → 7 (keine Änderung am Tagebuch)
+  5: (l) => l,
+  6: (l) => l,
 };
 
 function run(rec, migrations) {
@@ -73,6 +105,10 @@ function run(rec, migrations) {
 
 export const migrateRecipe = (r) => run(r, RECIPE_MIGRATIONS);
 export const migrateLog = (l) => run(l, LOG_MIGRATIONS);
+// Kulturen gibt es ab Schema 6 – frühere Versionen hatten keine, daher (noch) keine Migrationen
+const CULTURE_MIGRATIONS = {};
+export const migrateCulture = (c) => run(c, CULTURE_MIGRATIONS);
+export function importCulture(raw) { const m = migrateCulture(raw); return { rec: sanitizeCulture(m.rec), newer: m.newer }; }
 export const needsMigration = (rec) => (Math.floor(num(rec?.v)) || 1) < SCHEMA;
 
 // DER eine Weg für alle Daten von außen (Sicherungsdatei, QR-Code, Geräte-Sync):

@@ -505,3 +505,63 @@ body[data-hands] .sheet-h { font-size: 1.05rem; color: var(--text); }
 .badge { position: absolute; top: -3px; right: 6px; min-width: 18px; height: 18px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-size: .68rem; font-weight: 750; display: grid; place-items: center; padding: 0 4px; }
 
 @media (min-width: 720px) { .hero { height: 260px; } }
+
+/* ---------- 2.0: Nebenher-Schritte, Notieren, Anpassen, Protokoll, Vergleich ---------- */
+button.more-link { background: none; border: 0; color: var(--accent, inherit); width: 100%; cursor: pointer; }
+.tl-i.par { margin-left: 22px; padding-left: 10px; border-left: 2px dashed var(--line, rgba(127,127,127,.35)); }
+.tl-i.par .tl-dot { transform: scale(.82); }
+.par-tag { font-size: .74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.flowbar2 { position: relative; height: 6px; margin: -4px 0 12px; }
+.flowbar2 i { position: absolute; top: 0; height: 6px; border-radius: 999px; opacity: .8; }
+.side-steps { margin: 10px 0 0; text-align: left; }
+.side-step { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface-2); border-radius: 12px; padding: 6px 6px 6px 12px; font-size: .9rem; margin-top: 6px; }
+.side-step small { color: var(--muted); }
+.meas-l { font-size: .74rem; color: var(--muted); margin: 2px 0 4px; }
+.meas .seg.feel { margin: 0 0 10px; }
+.meas .note-in { width: 100%; margin: 6px 0; background: var(--surface); font-size: .92rem; }
+.meas .thumbs { margin: 4px 0 6px; }
+details.adj { border-top: 1px solid var(--line, rgba(127,127,127,.2)); margin-top: 10px; padding-top: 8px; }
+details.adj > summary { font-weight: 650; font-size: .92rem; cursor: pointer; }
+details.adj[open] > summary { margin-bottom: 8px; }
+.adj-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: .92rem; }
+.adj-row.chg span:first-child, tr.chg td:first-child { font-weight: 700; }
+.adj-info { font-size: .86rem; color: var(--muted); margin: 8px 0; line-height: 1.5; }
+.adj-info b { color: var(--text); }
+tr.chg td.num { color: var(--accent, inherit); font-weight: 700; }
+.delta { font-size: .76rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
+.delta.up { background: var(--warn-soft); color: var(--warn); }
+.delta.down { background: rgba(70, 130, 200, .16); color: #3f78b8; }
+.proto-chg { font-size: .88rem; background: var(--surface-2); border-radius: 12px; padding: 8px 12px; margin: 4px 0 10px; line-height: 1.5; }
+.proto-edit { margin: 6px 0; max-width: 220px; }
+.cmp-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 12px; }
+.cmp-pick > div { padding: 8px; border-radius: 14px; background: var(--surface-2); text-align: center; }
+.cmp-pick > div.win { box-shadow: inset 0 0 0 2px var(--ok); }
+.cmp-pick select { width: 100%; font-size: .85rem; }
+.cmp-stars { margin-top: 4px; }
+table.cmp { width: 100%; border-collapse: collapse; font-size: .9rem; margin-bottom: 8px; }
+table.cmp th { text-align: left; font-weight: 600; color: var(--muted); padding: 7px 6px 7px 0; width: 34%; vertical-align: top; }
+table.cmp td { padding: 7px 6px; vertical-align: top; border-bottom: 1px solid var(--line, rgba(127,127,127,.15)); }
+table.cmp td.win { background: var(--ok-soft); font-weight: 650; }
+.card.past { text-decoration: none; color: inherit; }
+.card.past a.grow { text-decoration: none; color: inherit; }
+
+/* ---------- 2.1: Meine Kulturen, Vorteig-Arten ---------- */
+.cult-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.cult-row:last-of-type { border-bottom: 0; }
+.cult-row a { text-decoration: none; color: inherit; }
+.warnt { color: var(--warn); font-weight: 650; }
+.cult-plan { flex-wrap: wrap; }
+.cult-plan select { width: auto; max-width: 100%; }
+.cult-feed { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .9rem; }
+.big-result.small .br-k { font-size: 1.05rem; }
+details.pf-types > summary { font-size: .92rem; margin: 8px 0 4px; cursor: pointer; }
+/* ---------- 2.2: Teighände-Modus, Editor, Einstellungen ---------- */
+/* Lange Zutatenlisten scrollen in sich – der große Weiter-Knopf bleibt immer sichtbar */
+.hands-ing { max-height: 36vh; max-height: 36dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; flex-shrink: 0; }
+.hands-go { position: sticky; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 2; }
+.hands-row { flex-wrap: wrap; justify-content: center; }
+/* Im Rezept-Editor keine Tab-Leiste – mehr Platz zum Eingeben */
+body[data-view="edit"] .tabbar { display: none; }
+body[data-view="edit"] .wiz-foot { bottom: 0; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+.set-group { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; margin: 14px 0 2px; }
+.link-x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: .85rem; }

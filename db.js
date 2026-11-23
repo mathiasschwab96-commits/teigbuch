@@ -1,17 +1,19 @@
 // Teigbuch – lokale Speicherung (IndexedDB), Fotos, Export/Import
 const DB_NAME = 'teigbuch';
-const STORES = ['recipes', 'logs', 'sessions', 'photos', 'meta'];
+// Version 2 (App 2.1): zusätzlicher Speicher „cultures“ – vorhandene Daten bleiben unberührt
+const STORES = ['recipes', 'logs', 'sessions', 'photos', 'meta', 'cultures'];
 let dbPromise;
 
 function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((res, rej) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(DB_NAME, 2);
       req.onupgradeneeded = () => {
         const d = req.result;
         STORES.forEach((s) => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); });
       };
-      req.onsuccess = () => res(req.result);
+      // Spätere Versionen dürfen die Datenbank erweitern: diese Verbindung dann freigeben
+      req.onsuccess = () => { req.result.onversionchange = () => req.result.close(); res(req.result); };
       req.onerror = () => rej(req.error);
     });
   }
@@ -136,12 +138,19 @@ export async function buildExport({ recipeIds = null, withPhotos = true, meta = 
       if (ph) photos.push({ id, type: ph.type, data: bufToB64(ph.data) });
     }
   }
-  return { app: 'Teigbuch', format: 2, ...meta, exportedAt: new Date().toISOString(), recipes, logs, photos };
+  // Kulturen nur in der kompletten Sicherung (nicht beim Export einzelner Rezepte)
+  const cultures = recipeIds ? [] : await getAll('cultures');
+  return { app: 'Teigbuch', format: 2, ...meta, exportedAt: new Date().toISOString(), recipes, logs, cultures, photos };
 }
 
-export async function importData(obj, { cleanRecipe = (x) => x, cleanLog = (x) => x } = {}) {
+export async function importData(obj, { cleanRecipe = (x) => x, cleanLog = (x) => x, cleanCulture = (x) => x } = {}) {
   if (!obj || obj.app !== 'Teigbuch' || !Array.isArray(obj.recipes)) throw new Error('Das ist keine Teigbuch-Datei.');
-  const out = { recipes: 0, logs: 0, photos: 0, skipped: 0 };
+  const out = { recipes: 0, logs: 0, cultures: 0, photos: 0, skipped: 0 };
+  for (const raw of Array.isArray(obj.cultures) ? obj.cultures : []) {
+    const c = cleanCulture(raw);
+    const ex = await get('cultures', c.id);
+    if (!ex || (c.updatedAt || 0) >= (ex.updatedAt || 0)) { await put('cultures', { ...c, updatedAt: Date.now() }); out.cultures++; } else out.skipped++;
+  }
   for (const ph of obj.photos || []) {
     const id = String(ph.id || '').replace(/[^\w-]/g, '');
     if (!id || !/^image\/[\w.+-]+$/.test(ph.type || '') || typeof ph.data !== 'string') continue;
