@@ -8,7 +8,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -183,6 +183,7 @@ function render() {
   const [a, b, c] = parts;
   const same = location.hash === lastHash;
   const y = window.scrollY;
+  if (!same) S.prevHash = lastHash; // für „Zurück“-Knöpfe und Speichern (zurück statt neue Seite)
   lastHash = location.hash;
   if (S.hands && !(a === 'bake' && b === S.hands)) { S.hands = null; keepAwake(false); }
   document.body.toggleAttribute('data-hands', !!S.hands);
@@ -193,7 +194,7 @@ function render() {
     else if (a === 'edit') out = vEdit(b);
     else if (a === 'plan') out = vPlan(b);
     else if (a === 'bake') { tab = 'bake'; out = b ? vSession(b) : vBakeList(); }
-    else if (a === 'log') out = vLog(b, c, q);
+    else if (a === 'log') out = c === 'new' || parts[3] === 'edit' ? vLog(b, c, q) : vLogView(b, c, q);
     else if (a === 'cmp') out = vCmp(b, q);
     else if (a === 'culture') { tab = 'bake'; out = vCulture(b); }
     else if (a === 'import') out = vImport(b || '');
@@ -391,7 +392,7 @@ function vRecipe(id, tab) {
     </div>
     ${MG.openQuestions(r).length ? `<div class="hint-card warnc"><div>📝 Hier fehlt noch eine Angabe: ${esc(MG.openQuestions(r)[0].question)}</div><a class="btn sm primary" href="#/fix">Nachtragen</a></div>` : ''}
     <a class="btn primary big block" href="#/plan/${id}">${icon('timer')} Backen planen</a>
-    <div class="seg" role="tablist">${tabs.map(([k, l]) => `<a role="tab" class="${tab === k ? 'on' : ''}" href="#/r/${id}?tab=${k}">${l}</a>`).join('')}</div>
+    <div class="seg" role="tablist">${tabs.map(([k, l]) => `<a role="tab" data-replace class="${tab === k ? 'on' : ''}" href="#/r/${id}?tab=${k}">${l}</a>`).join('')}</div>
     <div id="tabbody">${body}</div>
   </div>`;
   return { html };
@@ -700,7 +701,17 @@ function paramChips(pr, plain = false) {
   return plain ? items.join(' · ') : items.map((x) => `<span class="pchip">${x}</span>`).join('');
 }
 
+// Schlanke Karte im Tagebuch-Reiter – antippen öffnet die Ansicht mit allen Details
 function logCard(l, r) {
+  const ph = (l.photos || [])[0], hyd = num(l.params?.hydration);
+  const note = (l.notes || '').split(/(?<=[.!?])\s|\n/)[0];
+  return `<a class="card log-card" href="#/log/${r.id}/${l.id}">
+    ${ph ? `<span class="ph log-thumb"><img data-photo="${ph}" alt=""></span>` : ''}
+    <span class="grow"><span class="row between"><b>${fmtDate(l.date)}</b>${l.rating ? stars(l.rating) : '<small class="muted">–</small>'}</span>
+      <small class="muted">${[hyd && `💧 ${fmtPct(hyd)}`, l.params?.pan && `⭕ ${esc(l.params.pan)}`, l.protocol && protoSum(l.protocol)].filter(Boolean).join(' · ')}</small>
+      ${note ? `<span class="log-note">${esc(note)}</span>` : ''}</span></a>`;
+}
+function logCardFull(l, r) {
   const subs = SUBRATINGS[r.category] || SUBRATINGS.other;
   const subTxt = subs.filter(([k]) => l.sub?.[k]).map(([k, lbl]) => `${lbl} ${l.sub[k]}/5`).join(' · ');
   const cond = [l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.fridgeTemp && `Kühlschrank ${esc(l.fridgeTemp)} °C`, l.waterTemp && `Wasser ${esc(l.waterTemp)} °C`, l.iceG && `Eis ${esc(l.iceG)} g`, l.oven && esc(l.oven), l.bakeTemp && `${esc(l.bakeTemp)} °C`, l.bakeTime && esc(l.bakeTime)].filter(Boolean).join(' · ');
@@ -773,6 +784,7 @@ function vEdit(id) {
   }
   if (!S.draft) return templatePicker();
   const d = S.draft;
+  if (S.editFor !== (d.id || 'new')) { S.editFor = d.id || 'new'; S.editFrom = S.prevHash; }
   const { t: titles, b: bodies } = wizFor(d);
   const w = S.wiz = Math.min(S.wiz, titles.length - 1);
   const html = `
@@ -2141,7 +2153,87 @@ function vCmp(rid, q) {
   </div>` };
 }
 
-// ---------- Tagebuch-Eintrag ----------
+// ---------- Tagebuch-Eintrag ansehen (Übersicht · Zutaten · Backprozess) ----------
+const deltaPill = (d, unit = 'min') => (!d ? '<span class="dp"></span>'
+  : `<span class="dp ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'} ${unit === 'min' ? fmtDur(Math.abs(d)) : `${fmtNum(Math.abs(d), Math.abs(d) < 20 ? 1 : 0)} ${unit}`}</span>`);
+function vLogView(rid, lid, q) {
+  const r = byId(rid), l = S.logs.find((x) => x.id === lid);
+  if (!r || !l) return vNotFound();
+  const tab = q.get('tab') || 'ov', pr = l.protocol, p = l.params || {}, cake = isCake(r);
+  const subs = (SUBRATINGS[r.category] || SUBRATINGS.other).filter(([k]) => l.sub?.[k]);
+  const tabs = [['ov', 'Übersicht'], ['ing', 'Zutaten'], ['proc', 'Backprozess']];
+  const base = `#/log/${rid}/${lid}`;
+  let body = '';
+  if (tab === 'ing') {
+    if (!pr?.blocks?.length) body = '<div class="empty small"><p>Für diesen Eintrag gibt es keine genauen Mengen – er stammt aus der Zeit vor dem Backprotokoll oder wurde ohne Backvorgang angelegt.</p></div>';
+    else {
+      const only = !!S.logOnlyChg;
+      body = `${pr.hydration !== null ? `<div class="lv-sum">💧 Hydration <b>${fmtPct(pr.hydration)}</b>${pr.baseHydration !== null && Math.abs(pr.hydration - pr.baseHydration) > 0.05 ? ` <span class="muted">statt ${fmtPct(pr.baseHydration)} im Rezept</span>` : ''}</div>` : ''}
+        ${pr.blocks.map((b) => {
+          const rows = b.rows.filter((x) => !only || x.was);
+          return rows.length ? `<section class="ing lv-ing"><h3>${esc(b.title)}</h3><table>${rows.map((x) => {
+            const d = x.was && x.was !== 'neu' ? num(x.txt) - num(x.was) : 0;
+            return `<tr ${x.was ? 'class="chg"' : ''}><td>${esc(x.name)}${x.was ? `<small>${x.was === 'neu' ? 'neu dazu' : `statt ${esc(x.was)}`}</small>` : ''}</td><td class="num">${esc(x.txt)}</td><td class="num">${x.was === 'neu' ? '<span class="dp up">neu</span>' : deltaPill(d, /ml/.test(x.txt) ? 'ml' : 'g')}</td></tr>`;
+          }).join('')}</table></section>` : '';
+        }).join('')}
+        <label class="check"><input type="checkbox" data-action="logOnlyChg" ${only ? 'checked' : ''}> Nur Änderungen zeigen</label>`;
+    }
+  } else if (tab === 'proc') {
+    if (!pr?.steps?.length) body = '<div class="empty small"><p>Für diesen Eintrag gibt es keinen gespeicherten Ablauf.</p></div>';
+    else {
+      const planT = pr.steps.filter((s) => !s.par).reduce((a, s) => a + num(s.plan), 0);
+      const actT = pr.endAt && pr.startAt ? (pr.endAt - pr.startAt) / 60000 : null;
+      body = `<div class="lv-sum">⏱ Gesamt <b>${actT !== null ? fmtDur(actT) : '–'}</b> <span class="muted">geplant ${fmtDur(planT)}</span><br><small class="muted">${protoSum(pr)}</small></div>
+        <div class="pt">${pr.steps.map((s) => {
+          const d = protoDelta(s), extra = [s.feel && `🤲 ${C.FEELS[s.feel]}`, measLabel(s.meas), s.comp && `🌡️ Ausgleich ${fmtDur(s.comp)}`, s.shift && `${s.shift > 0 ? '+' : '−'}${fmtDur(Math.abs(s.shift))} per Knopf`].filter(Boolean);
+          const icons = [s.note && '📝', s.photos?.length && '📷', s.feel && '🤲'].filter(Boolean).join(' ');
+          const more = extra.length || s.note || s.photos?.length;
+          const row = `<span class="pt-t">${s.start ? fmtTime(s.start) : ''}</span><span class="pt-n">${s.par ? '┗ ' : ''}${kindOf(s.kind).icon} ${esc(s.name)}${d ? `<small>geplant ${fmtDur(s.plan)}</small>` : ''}</span><span class="pt-d">${s.act !== null ? fmtDur(s.act) : '–'}${icons ? `<small>${icons}</small>` : ''}</span>${deltaPill(d)}`;
+          return more ? `<details class="pt-r ${s.par ? 'par' : ''}"><summary>${row}</summary><div class="pt-x">${extra.length ? `<div class="muted small">${extra.map(esc).join(' · ')}</div>` : ''}${s.note ? `<div class="tl-n">✏️ ${esc(s.note)}</div>` : ''}${s.photos?.length ? `<div class="thumbs">${s.photos.map((ph) => `<button class="ph thumb" data-action="viewPhoto" data-id="${ph}"><img data-photo="${ph}" alt=""></button>`).join('')}</div>` : ''}</div></details>`
+            : `<div class="pt-r ${s.par ? 'par' : ''}"><div class="pt-s">${row}</div></div>`;
+        }).join('')}</div>
+        ${pr.changes?.length ? `<p class="muted small">🎨 Zutaten wurden beim Backen angepasst – siehe Reiter „Zutaten“.</p>` : ''}`;
+    }
+  } else {
+    // Übersicht
+    const cover = (l.photos || [])[0];
+    const recHyd = pr?.baseHydration ?? num(r.water?.pct);
+    const tile = (k, v, sub = '') => `<div class="lv-tile"><small>${k}</small><b>${v}</b>${sub ? `<small class="muted">${sub}</small>` : ''}</div>`;
+    const planT = pr?.steps?.length ? pr.steps.filter((s) => !s.par).reduce((a, s) => a + num(s.plan), 0) / 60 : null;
+    const tiles = [
+      !cake && num(p.hydration) > 0 && tile('💧 Hydration', fmtPct(p.hydration), Math.abs(num(p.hydration) - recHyd) > 0.05 ? `Rezept ${fmtPct(recHyd)}` : ''),
+      cake ? (p.pan && tile('⭕ Form', esc(p.pan))) : (num(p.count) > 0 && tile('⚖️ Menge', `${fmtNum(p.count, 0)} × ${fmtNum(p.pieceWeight, 0)} g`)),
+      num(p.totalHours) > 0 && tile('⏱ Gesamtzeit', `${fmtNum(p.totalHours)} h`, planT ? `geplant ${fmtNum(planT)} h` : ''),
+      (l.doughTemp || l.roomTemp) && tile('🌡️ Temperatur', l.doughTemp ? `Teig ${esc(l.doughTemp)} °C` : `Raum ${esc(l.roomTemp)} °C`, l.doughTemp && l.roomTemp ? `Raum ${esc(l.roomTemp)} °C` : ''),
+      (l.oven || l.bakeTemp || l.bakeTime) && tile('🔥 Ofen', esc(l.bakeTemp ? `${l.bakeTemp} °C` : l.oven), [l.bakeTemp && l.oven, l.bakeTime].filter(Boolean).map(esc).join(' · ')),
+    ].filter(Boolean);
+    const devs = (pr?.steps || []).map((s) => ({ s, d: protoDelta(s) })).filter((x) => x.d).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 3);
+    body = `${cover ? `<div class="lv-photos"><button class="ph lv-cover" data-action="viewPhoto" data-id="${cover}"><img data-photo="${cover}" alt=""></button>
+        ${(l.photos || []).length > 1 ? `<div class="thumbs">${l.photos.slice(1).map((ph) => `<button class="ph thumb" data-action="viewPhoto" data-id="${ph}"><img data-photo="${ph}" alt=""></button>`).join('')}</div>` : ''}</div>` : ''}
+      ${subs.length ? `<div class="lv-subs">${subs.map(([k, lbl]) => `<span>${lbl} ${stars(l.sub[k])}</span>`).join('')}</div>` : ''}
+      ${tiles.length ? `<div class="lv-tiles">${tiles.join('')}</div>` : ''}
+      ${devs.length || pr?.changes?.length ? `<section class="card lv-dev"><b>Größte Abweichungen</b>
+        ${devs.map(({ s, d }) => `<div class="lv-dr"><span>${esc(s.name)}</span>${deltaPill(d)}</div>`).join('')}
+        ${pr?.changes?.length ? `<div class="lv-dr"><span>🎨 ${pr.changes.length} Zutat${pr.changes.length > 1 ? 'en' : ''} angepasst</span><a class="small" data-replace href="${base}?tab=ing">ansehen</a></div>` : ''}</section>` : ''}
+      ${l.notes ? `<p class="pre lv-note">📝 ${esc(l.notes)}</p>` : ''}
+      ${l.nextTime ? `<p class="next">➡️ <b>Nächstes Mal:</b> ${esc(l.nextTime)}</p>` : ''}
+      <div class="act-row">
+        <button class="btn sm" data-action="bakeAgain" data-id="${l.id}">${icon('play')} So nochmal backen</button>
+        ${logsFor(rid).length >= 2 ? `<a class="btn sm ghost" href="#/cmp/${rid}?b=${l.id}">⇄ Vergleichen</a>` : ''}
+        ${pr?.pct || !cake ? `<button class="icon-btn" data-action="logMenu" data-id="${l.id}" aria-label="Mehr">${icon('more')}</button>` : ''}
+      </div>`;
+  }
+  return { html: `
+  <header class="top sub"><a class="icon-btn" href="#/r/${rid}?tab=log" aria-label="Zurück">${icon('back')}</a>
+    <div class="grow"><div class="eyebrow">Tagebuch · ${esc(r.name)}</div><h1 class="title sm">${fmtDate(l.date)} ${l.rating ? stars(l.rating) : ''}</h1></div>
+    <a class="icon-btn" href="${base}/edit" aria-label="Bearbeiten">${icon('edit')}</a></header>
+  <div class="pad">
+    <div class="seg" role="tablist">${tabs.map(([k, lbl]) => `<a role="tab" data-replace class="${tab === k ? 'on' : ''}" href="${base}?tab=${k}">${lbl}</a>`).join('')}</div>
+    ${body}
+  </div>` };
+}
+
+// ---------- Tagebuch-Eintrag bearbeiten ----------
 function vLog(rid, lid, q) {
   const r = byId(rid);
   if (!r) return vNotFound();
@@ -2167,13 +2259,14 @@ function vLog(rid, lid, q) {
     S.logDraft._key = key;
     S.logDraft._new = !ex;
     S.protoEdit = false;
+    S.logFrom = S.prevHash;
   }
   const l = S.logDraft;
   const subs = SUBRATINGS[r.category] || SUBRATINGS.other;
   const starInput = (k, v, big) => `<div class="stars-in ${big ? 'big' : ''}">${[1, 2, 3, 4, 5].map((n) => `<button class="${n <= v ? 'on' : ''}" data-action="rate" data-k="${k}" data-v="${n}" aria-label="${n} Sterne">★</button>`).join('')}</div>`;
   const lb = (path, val, attrs = '') => `<input class="in" data-bind="l.${path}" value="${esc(val ?? '')}" ${attrs}>`;
   const html = `
-  <header class="top sub"><a class="icon-btn" href="#/r/${rid}?tab=log" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Tagebuch · ${esc(r.name)}</div><h1 class="title sm">${l._new ? 'Neuer Eintrag' : 'Eintrag bearbeiten'}</h1></div>
+  <header class="top sub"><a class="icon-btn" href="${l._new ? `#/r/${rid}?tab=log` : `#/log/${rid}/${l.id}`}" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">Tagebuch · ${esc(r.name)}</div><h1 class="title sm">${l._new ? 'Neuer Eintrag' : 'Eintrag bearbeiten'}</h1></div>
     <button class="btn sm primary" data-action="logSave">Speichern</button></header>
   <div class="pad">
     <section class="card">
@@ -2917,15 +3010,16 @@ const A = {
       S.draft = rec;
       S.ki = { input: '', answer: '', error: '' };
       startDraft();
-      location.hash = '#/edit/new';
+      location.replace('#/edit/new');
       toast(warnings.length ? `✓ Rezept erkannt – ${warnings[0]}` : '✓ Rezept erkannt – bitte kurz prüfen und speichern', warnings.length ? 6000 : 3500);
     } catch (e) { k.error = e.message; render(); }
   },
   pickTpl: (el) => { const t = TEMPLATES.find((x) => x.id === el.dataset.t); discardDraft(); S.draft = t.build(); startDraft(); },
   pickBlank: (el) => { discardDraft(); S.draft = C.blankRecipe(el.dataset.c); startDraft(); },
-  wizGo: (el) => { S.wiz = +el.dataset.i; render(); },
-  wizNext: () => { S.wiz = Math.min(WIZ.length - 1, S.wiz + 1); render(); },
-  wizPrev: () => { S.wiz = Math.max(0, S.wiz - 1); render(); },
+  // Editor-Schritte landen im Verlauf → die Zurück-Taste geht einen Schritt zurück statt aus dem Editor
+  wizGo: (el) => { S.wiz = +el.dataset.i; history.pushState({ wiz: S.wiz, n: (history.state?.n || 0) + 1 }, ''); render(); },
+  wizNext: () => { S.wiz = Math.min(wizFor(S.draft).t.length - 1, S.wiz + 1); history.pushState({ wiz: S.wiz, n: (history.state?.n || 0) + 1 }, ''); render(); },
+  wizPrev: () => { if (history.state?.wiz !== undefined) history.back(); else { S.wiz = Math.max(0, S.wiz - 1); render(); } },
   editCancel: async () => {
     if (!confirm('Änderungen verwerfen?')) return;
     const id = S.draft?.id, wasNew = S.draft?._new;
@@ -2942,7 +3036,7 @@ const A = {
     await saveRecipe(d);
     S.draft = null; S.scale = null; S.plan = null; S.draftNewPhotos = [];
     toast('✓ Rezept gespeichert');
-    location.hash = `#/r/${d.id}`;
+    leaveTo(`#/r/${d.id}`, S.editFrom, history.state?.n || 0); // Editor verschwindet aus dem Verlauf
   },
   setCat: (el) => {
     const d = S.draft, to = el.dataset.v;
@@ -3168,7 +3262,7 @@ const A = {
     await saveSession(s);
     S.plan = null;
     if ('Notification' in window && Notification.permission === 'default') await askNotif();
-    location.hash = `#/bake/${s.id}`;
+    location.replace(`#/bake/${s.id}`); // Planer verschwindet aus dem Verlauf
     toast(startAt > Date.now() + 60000 ? '✓ Plan aktiviert – du wirst zum Start erinnert' : '✓ Los geht’s!');
   },
 
@@ -3263,6 +3357,16 @@ const A = {
     render();
   },
   toggleCancelled: () => { S.showCancelled = !S.showCancelled; render(); },
+  logOnlyChg: () => { S.logOnlyChg = !S.logOnlyChg; render(); },
+  logMenu: (el) => {
+    const l = S.logs.find((x) => x.id === el.dataset.id), r = l && byId(l.recipeId);
+    if (!r) return;
+    sheet(fmtDate(l.date), [
+      ...(l.protocol?.pct || !isCake(r) ? [{ label: 'Ins Rezept übernehmen', icon: 'check', run: () => A.applyLog({ dataset: { id: l.id } }) }] : []),
+      ...(l.protocol?.pct ? [{ label: 'Als Variante speichern', icon: 'copy', run: () => A.logVariant({ dataset: { id: l.id } }) }] : []),
+      { label: 'Bearbeiten', icon: 'edit', run: () => { location.hash = `#/log/${r.id}/${l.id}/edit`; } },
+    ]);
+  },
   // 🫙 Meine Kulturen
   cultNew: async (el) => {
     const t = C.CULTURE_TYPES[el.dataset.v] || C.CULTURE_TYPES.custom;
@@ -3309,8 +3413,8 @@ const A = {
     location.hash = '#/bake';
   },
   cmpAll: () => { S.cmpAll = !S.cmpAll; render(); },
-  handsOn: (el) => { S.hands = el.dataset.id; render(); keepAwake(true); speak('Teighände-Modus an.'); },
-  handsExit: () => { S.hands = null; keepAwake(false); render(); },
+  handsOn: (el) => { S.hands = el.dataset.id; history.pushState({ hands: 1 }, ''); render(); keepAwake(true); speak('Teighände-Modus an.'); },
+  handsExit: () => { if (history.state?.hands) { history.back(); return; } S.hands = null; keepAwake(false); render(); },
   stepShift: async (el) => {
     const s = sessById(el.dataset.id), i = +el.dataset.i, st = s.steps[i];
     const eff = effSteps(s)[i];
@@ -3386,7 +3490,8 @@ const A = {
     S.logDraft = null;
     const fresh = await checkAchievements();
     toast(fresh.length ? `✓ Gespeichert · 🏅 ${fresh[0].icon} ${fresh[0].title}${fresh.length > 1 ? ` +${fresh.length - 1}` : ''}` : '✓ Eintrag gespeichert', fresh.length ? 3500 : undefined);
-    location.hash = `#/r/${l.recipeId}?tab=log`;
+    // Bearbeitet → zurück zur Ansicht; neu → Tagebuch des Rezepts (Formular verschwindet aus dem Verlauf)
+    leaveTo(isNew ? `#/r/${l.recipeId}?tab=log` : `#/log/${l.recipeId}/${l.id}`, S.logFrom);
   },
   logDelete: async () => {
     const l = S.logDraft;
@@ -3398,7 +3503,7 @@ const A = {
     scheduleSync(500);
     S.logs = S.logs.filter((x) => x.id !== l.id);
     S.logDraft = null;
-    location.hash = `#/r/${l.recipeId}?tab=log`;
+    leaveTo(`#/r/${l.recipeId}?tab=log`, S.logFrom); // Formular verschwindet aus dem Verlauf
   },
   bakeAgain: (el) => {
     const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l.recipeId), pr = l.params || {};
@@ -3754,7 +3859,7 @@ const CHANGES = {
   },
   cmpPick: (el) => {
     const a = el.dataset.side === 'a' ? el.value : el.dataset.a, b = el.dataset.side === 'b' ? el.value : el.dataset.b;
-    location.hash = `#/cmp/${el.dataset.rid}?a=${a}&b=${b}`;
+    location.replace(`#/cmp/${el.dataset.rid}?a=${a}&b=${b}`);
   },
   // Backprotokoll: tatsächliche Dauer eines Schritts korrigieren
   protoAct: (el) => {
@@ -3801,6 +3906,39 @@ const CHANGES = {
     render();
   },
 };
+
+// ---------- Navigation: Zurück wie am Handy ----------
+const routeOf = (h) => String(h || '').split('?')[0];
+// Nach Speichern/Starten: führt das Ziel dorthin zurück, wo man herkam → echter Schritt zurück, sonst Seite ersetzen
+function leaveTo(target, from, depth = 0) {
+  if (from && routeOf(from) === routeOf(target)) {
+    history.go(-(1 + depth)); // depth = Editor-Schritte, die im Verlauf stehen
+    if (from !== target) setTimeout(() => { if (routeOf(location.hash) === routeOf(target) && location.hash !== target) location.replace(target); }, 60);
+  } else if (depth) { history.go(-depth); setTimeout(() => location.replace(target), 80); } else location.replace(target);
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#"]');
+  if (!a || e.defaultPrevented) return;
+  const href = a.getAttribute('href');
+  // Reiter (Zutaten/Ablauf/Tagebuch …) zählen nicht als eigene Seite
+  if (a.hasAttribute('data-replace')) { e.preventDefault(); location.replace(href); return; }
+  // „‹ Zurück“ oben: wie die Zurück-Taste, wenn man genau von dort kam
+  if (a.getAttribute('aria-label') === 'Zurück' && S.prevHash && routeOf(S.prevHash) === routeOf(href)) { e.preventDefault(); history.back(); }
+});
+// Zurück-Taste schließt zuerst ein offenes Menü / Foto
+let sheetState = false;
+window.addEventListener('popstate', (e) => {
+  if (sheetState && !e.state?.sheet) { sheetState = false; $('#sheet-root').innerHTML = ''; if (S.scanStream) { S.scanStream.getTracks().forEach((t) => t.stop()); S.scanStream = null; } return; }
+  // Editor: Zurück = vorheriger Editor-Schritt (gleiche Adresse, nur der Schritt ändert sich)
+  if (route().parts[0] === 'edit' && S.draft && !e.state?.sheet) { S.wiz = e.state?.wiz ?? 0; render(); }
+  // Teighände-Modus: Zurück beendet zuerst den Modus
+  if (S.hands && route().parts[0] === 'bake' && !e.state?.hands) { S.hands = null; keepAwake(false); render(); }
+});
+new MutationObserver(() => {
+  const open = !!$('#sheet-root')?.firstElementChild;
+  if (open && !sheetState) { sheetState = true; history.pushState({ sheet: 1 }, ''); }
+  else if (!open && sheetState) { sheetState = false; if (history.state?.sheet) history.back(); }
+}).observe(document.getElementById('sheet-root'), { childList: true });
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
