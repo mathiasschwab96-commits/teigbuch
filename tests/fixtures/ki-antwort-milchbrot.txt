@@ -1,0 +1,43 @@
+{
+ "teigbuch": "ki-1",
+ "name": "Brioche",
+ "category": "fine",
+ "description": "Weiche Brioche mit Tangzhong aus Milch, geflochten als Zopf. Die Mengen ergeben 2 Zöpfe.",
+ "source": "",
+ "yeastType": "fresh",
+ "pieces": {
+  "count": 2,
+  "weight_g": null
+ },
+ "preferments": [],
+ "main": {
+  "flours": [
+   { "name": "Mehl", "g": 800 },
+   { "name": "Mehl (Tangzhong)", "g": 40 }
+  ],
+  "water_g": 0,
+  "ice_g": 0,
+  "water_temp_c": null,
+  "salt_g": 9,
+  "yeast_g": 18,
+  "oil_g": 0,
+  "extras": [
+   { "name": "Milch", "g": 290 },
+   { "name": "Milch (Tangzhong)", "g": 200 },
+   { "name": "Eier (2 ganze Eier + 1 Eiklar)", "g": 130 },
+   { "name": "Butter (warm)", "g": 100 },
+   { "name": "Zucker", "g": 75 }
+  ]
+ },
+ "lamination": { "name": "", "g": 0 },
+ "steps": [
+  { "kind": "prep", "name": "Tangzhong kochen", "minutes": null, "location": "rt", "temp": "", "stage": "main", "parallel": false, "repeat": null, "notes": "40 g Mehl und 200 g Milch unter ständigem Rühren erhitzen, bis die Masse stockt und nicht mehr fester wird." },
+  { "kind": "rest", "name": "Tangzhong abkühlen", "minutes": null, "location": "fridge", "temp": "", "stage": "main", "parallel": false, "repeat": null, "notes": "" },
+  { "kind": "mix", "name": "Teig kneten", "minutes": null, "location": "rt", "temp": "", "stage": "main", "parallel": false, "repeat": null, "notes": "Milch, Ei und Butter verrühren, Germ hineinbröseln." },
+  { "kind": "bulk", "name": "Teig gehen lassen", "minutes": 120, "location": "rt", "temp": "", "stage": "main", "parallel": false, "repeat": null, "notes": "Abgedeckt ruhen lassen, bis der Teig deutlich aufgegangen ist." },
+  { "kind": "shape", "name": "Zöpfe formen", "minutes": null, "location": "rt", "temp": "", "stage": null, "parallel": false, "repeat": null, "notes": "" },
+  { "kind": "proof", "name": "Stückgare", "minutes": 60, "location": "rt", "temp": "", "stage": null, "parallel": false, "repeat": null, "notes": "Abgedeckt ruhen lassen." },
+  { "kind": "bake", "name": "Backen", "minutes": 25, "location": "oven", "temp": "170 °C", "stage": null, "parallel": false, "repeat": null, "notes": "Heißluft mit Dampf." }
+ ],
+ "notes": "Der Tangzhong ist kein Vorteig. Weil er nur mit Milch gemacht wird, stehen seine Zutaten im Hauptteig als „Mehl (Tangzhong)“ und „Milch (Tangzhong)“. Im Rezept stehen 2–3 Eier: 1 Dotter wird zum Einstreichen verwendet."
+}

@@ -190,6 +190,169 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   check('KI: Croissant – Ziehfett 250 g = 50 %, Kategorie Feingebäck', kr.category === 'fine' && near(kr.lamination.pct, 50, 0.001) && near(C.calc(kr).lam.g, 250, 0.05));
 }
 
+// ---------- 3d) Sicherung aus App 1.9 (Schema 4) → Schema 5 (Nebenher-Schritte, Backprotokoll) ----------
+{
+  group('Sicherung aus App 1.9 (backup-format2-app1.9.json)');
+  const f = await load('backup-format2-app1.9.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 5, `v=${r.v}`);
+  check('Paralleler Schritt bleibt „zusammen starten“ (wie bisher)', r.steps[3].parallel === true && r.steps[3].align === '');
+  const tl = C.timeline(r.steps, 0);
+  check('Zeitplan unverändert: Vorheizen startet mit der Stückgare', tl[3].start === tl[2].start && tl[4].start === tl[2].end, `${tl[3].start / 60000} min`);
+  check('Keine Rückfragen nötig', MG.openQuestions(r).length === 0);
+  const l = MG.importLog(f.logs[0]).rec;
+  check('Tagebuch: ohne Backprotokoll (nichts erfunden), Rest unverändert', l.v === MG.SCHEMA && l.protocol === null && l.rating === 4 && l.nextTime === 'mehr Wasser');
+  const twice = MG.migrateRecipe(MG.migrateRecipe({ ...f.recipes[0] }).rec).rec;
+  check('Migration ist idempotent', twice.steps[3].align === '' && twice.v === MG.SCHEMA);
+  // „Zusammen fertig“: Vorheizen endet genau mit der Stückgare
+  const r2 = MG.importRecipe({ ...roundtrip(r), steps: r.steps.map((s, i) => (i === 3 ? { ...s, align: 'end' } : s)) }).rec;
+  const t2 = C.timeline(r2.steps, 0);
+  check('„Zusammen fertig“: Vorheizen startet 15 min nach Beginn der Stückgare, endet gleichzeitig', r2.steps[3].align === 'end' && t2[3].start === t2[2].start + 15 * 60000 && t2[3].end === t2[2].end);
+  check('„Zusammen fertig“: Backen beginnt direkt nach der Stückgare', t2[4].start === t2[2].end && C.planInfo(r2.steps, 0).total === C.planInfo(r.steps, 0).total);
+  const longer = C.timeline(r2.steps.map((s, i) => (i === 3 ? { ...s, durationMin: 90 } : s)), 0);
+  check('Vorheizen länger als die Gare: startet schon vorher, Backen pünktlich', longer[3].end === longer[2].end && longer[3].start < longer[2].start && longer[4].start === longer[2].end);
+  check('align ohne parallel wird ignoriert', MG.importRecipe({ ...roundtrip(r), steps: [{ ...r.steps[0], align: 'end' }] }).rec.steps[0].align === '');
+  // Backprotokoll: Bereinigung und Erhalt
+  const proto = { startAt: 1, endAt: 2, hydration: 74, baseHydration: 72, dough: 912,
+    steps: [{ name: 'Stockgare', kind: 'bulk', loc: 'rt', plan: 120, act: 150, start: 1, note: 'sehr klebrig', feel: 'sticky', photos: ['abc', '<x>'], meas: { dough: 25.5, bad: 3 }, futureStep: 1 },
+      { name: '<img onerror=x>', kind: 'hack', loc: 'mars', plan: 'x', act: null, feel: 'nass' }],
+    blocks: [{ title: 'Hauptteig', rows: [{ name: 'Wasser', txt: '370 g', was: '360 g' }] }],
+    changes: [{ stage: 'Hauptteig', name: 'Wasser', from: '360 g', to: '370 g' }],
+    pct: { water: 74, salt: 2, yeast: 0.5, oil: 0, lam: 0, flours: [{ name: 'Weizenmehl 550', pct: 100 }], extras: [], pfs: [], cake: [] }, futureProto: 'x' };
+  const lp = MG.importLog({ ...roundtrip(f.logs[0]), v: MG.SCHEMA, protocol: proto }).rec;
+  const p0 = lp.protocol.steps[0], p1 = lp.protocol.steps[1];
+  check('Protokoll: Schritt mit geplant/tatsächlich, Notiz, Teiggefühl, Foto, Messwert', p0.plan === 120 && p0.act === 150 && p0.note === 'sehr klebrig' && p0.feel === 'sticky' && p0.photos.join() === 'abc,x' && p0.meas.dough === 25.5 && p0.meas.bad === undefined);
+  check('Protokoll: ungültige Werte bereinigt', p1.kind === 'other' && p1.loc === 'rt' && p1.plan === null && p1.act === null && p1.feel === '');
+  check('Protokoll: unbekannte Felder bleiben erhalten', lp.protocol.futureProto === 'x' && p0.futureStep === 1);
+  check('Protokoll: Export → Import ändert nichts', JSON.stringify(MG.importLog(roundtrip(lp)).rec.protocol) === JSON.stringify(lp.protocol));
+  // Übernahme ins Rezept (applyPct): Anteile vom Backtag, Menge bleibt
+  const ap = C.applyPct(structuredClone(r), lp.protocol.pct);
+  check('„Ins Rezept übernehmen“: Hydration 74 %, Menge 1 × 900 g bleibt', ap.water.pct === 74 && ap.yield.pieceWeight === 900 && near(C.calc(ap).D, 900, 0.5));
+  const cake = C.TEMPLATES.find((t) => t.id === 'biskuit').build();
+  const cp = C.applyPct(structuredClone(cake), { cake: [{ id: cake.parts[0].id, items: [{ name: 'Eier', amount: 5, unit: 'Stk' }] }] });
+  check('„Ins Rezept übernehmen“ (Kuchen): Zutatenliste des Backtags', cp.parts[0].items.length === 1 && cp.parts[0].items[0].amount === 5);
+}
+
+// ---------- 3e) Sicherung aus App 2.0 (Schema 5) → Schema 6 (neue Vorteige) ----------
+{
+  group('Sicherung aus App 2.0 (backup-format2-app2.0.json) + neue Vorteige');
+  const f = await load('backup-format2-app2.0.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 6, `v=${r.v}`);
+  check('Vorteig: Wasser, kein Salz, keine Saaten (eindeutig ergänzt)', r.preferments[0].liquid === 'water' && r.preferments[0].saltPct === 0 && r.preferments[0].seeds === false);
+  const c = C.calc(r);
+  check('Mengen unverändert: 4 × 250 g, Poolish 30 %', near(c.D, 1000, 0.5) && near(c.pfs[0].flour, c.F * 0.3, 0.01) && near(c.main.water, c.totals.water - c.pfs[0].water, 0.01));
+  check('„Zusammen fertig“ bleibt erhalten', r.steps[4].align === 'end' && r.steps[4].parallel === true);
+  const l = MG.importLog(f.logs[0]).rec;
+  check('Tagebuch mit Backprotokoll unverändert', l.v === MG.SCHEMA && l.protocol.steps[0].feel === 'firm' && l.protocol.changes.length === 1 && l.protocol.pct.water === 72);
+  check('Keine Rückfragen nötig', MG.openQuestions(r).length === 0);
+  check('Migration ist idempotent', MG.migrateRecipe(MG.migrateRecipe({ ...f.recipes[0] }).rec).rec.preferments[0].liquid === 'water');
+  // Tangzhong mit Milch: Milch wird von der Milch im Rezept abgezogen, Wasser-Hydration bleibt
+  const base = C.blankRecipe('fine');
+  Object.assign(base, { yield: { mode: 'flour', flour: 500, count: 1, pieceWeight: 0, loss: 0 }, water: { pct: 0, temp: '', icePct: '' }, extras: [{ name: 'Milch', pct: 60 }], salt: 2 });
+  const tz = MG.importRecipe({ ...roundtrip(base), v: MG.SCHEMA, preferments: [C.makePf('tangzhong', { liquid: 'milk', flourPct: 5 })] }).rec;
+  const ct = C.calc(tz);
+  check('Tangzhong 1 : 5 mit Milch: 25 g Mehl + 125 g Milch', near(ct.pfs[0].flour, 25, 0.01) && near(ct.pfs[0].water, 125, 0.01) && ct.pfs[0].milk);
+  check('Milch im Hauptteig = 300 − 125 = 175 g, Gesamtmilch 300 g, kein Wasser', near(ct.main.extras[0].g, 175, 0.01) && near(ct.main.extras[0].total, 300, 0.01) && near(ct.main.water, 0, 0.01));
+  check('Mehl im Hauptteig 475 g, Teig = 500 + 300 + 10 + 15 Hefe', near(ct.main.flours[0].g, 475, 0.01) && near(ct.D, 500 * (1 + 0.6 + 0.02 + 0.03), 0.5));
+  // Pâte fermentée mit Salz
+  const pz = C.TEMPLATES.find((t) => t.id === 'poolish').build();
+  const pt = MG.importRecipe({ ...roundtrip(pz), v: MG.SCHEMA, preferments: [C.makePf('pate', { flourPct: 20 })], yield: { mode: 'flour', flour: 500, count: 2, pieceWeight: 0, loss: 0 } }).rec;
+  const cp = C.calc(pt);
+  check('Pâte fermentée: 2 % Salz im Vorteig werden vom Hauptteig abgezogen', near(cp.pfs[0].salt, 2, 0.001) && near(cp.main.salt, 500 * 0.028 - 2, 0.001) && near(cp.totals.salt, 14, 0.001));
+  // Quellstück aus Saaten: zusätzlich, nicht Mehl
+  const qs = MG.importRecipe({ ...roundtrip(pt), preferments: [C.makePf('quell', { seeds: true, flourPct: 10, flourName: 'Leinsamen' })] }).rec;
+  const cq = C.calc(qs);
+  check('Saaten-Quellstück: 50 g Saaten + 50 g Wasser zusätzlich, Mehl bleibt 500 g', near(cq.F, 500, 0.01) && near(cq.main.flours[0].g, 500, 0.01) && near(cq.totals.seeds, 100, 0.01) && near(cq.main.water, cq.totals.water, 0.01));
+  check('Neue Vorteig-Arten werden beim Import akzeptiert', ['dampfl', 'pate', 'tangzhong', 'yudane', 'quell'].every((t) => MG.importRecipe({ ...roundtrip(pz), preferments: [{ ...C.makePf(t) }] }).rec.preferments[0].type === t));
+  const KI = await import('../ki-import.js');
+  const kt = MG.importRecipe(KI.kiToRecipe({ name: 'Milchbrot', category: 'fine', yeastType: 'fresh',
+    preferments: [{ type: 'tangzhong', flour_g: 40, water_g: 200, liquid: 'milk' }],
+    main: { flours: [{ name: 'Mehl', g: 800 }], water_g: 0, salt_g: 9, yeast_g: 18, extras: [{ name: 'Milch', g: 290 }, { name: 'Zucker', g: 75 }] },
+    steps: [{ kind: 'prep', name: 'Tangzhong kochen', stage: 'pf1' }, { kind: 'bulk', minutes: 120 }] }, { schema: MG.SCHEMA }).recipe).rec;
+  const ck = C.calc(kt);
+  check('KI: Tangzhong mit Milch → Vorteig 40 g + 200 g Milch, Gesamtmilch 490 g, Hauptteig 290 g', kt.preferments[0].type === 'tangzhong' && kt.preferments[0].liquid === 'milk'
+    && near(ck.F, 840, 0.01) && near(ck.pfs[0].water, 200, 0.05) && near(ck.main.extras[0].total, 490, 0.1) && near(ck.main.extras[0].g, 290, 0.1));
+  check('KI: Schritte ohne Dauer werden gemeldet', KI.kiToRecipe({ name: 'x', main: { flours: [{ name: 'Mehl', g: 500 }], water_g: 350 }, steps: [{ kind: 'mix' }, { kind: 'bulk', minutes: 60 }] }).warnings.some((w) => /1 Schritt ohne Dauer/.test(w)));
+}
+
+// ---------- 3f) Meine Kulturen (neue Datenart ab Schema 6) ----------
+{
+  group('Meine Kulturen (Sicherung, Bereinigung)');
+  const f = await load('backup-format2-app2.0.json');
+  check('Ältere Sicherung ohne Kulturen: kein Fehler, einfach keine Kulturen', !('cultures' in f) || Array.isArray(f.cultures));
+  const raw = { id: 'cultRog', name: 'Roggensauer „Fritz“', type: 'rye', ratio: [1, 5, 5], hydration: 100, days: 7, place: 'fridge', lead: 12,
+    feeds: [{ at: 1795400000000, temp: 24, rise: 6, note: 'aktiv' }, { at: 'x' }], futureCult: 1 };
+  const { rec: c, newer } = MG.importCulture(raw);
+  check('Kultur übernommen (Name, Art, Verhältnis, Rhythmus)', c.v === MG.SCHEMA && !newer && c.name === 'Roggensauer „Fritz“' && c.type === 'rye' && c.ratio.join() === '1,5,5' && c.days === 7 && c.lead === 12);
+  check('Fütterungen bereinigt (ungültige entfernt), unbekannte Felder bleiben', c.feeds.length === 1 && c.feeds[0].rise === 6 && c.futureCult === 1);
+  const evil = MG.importCulture({ name: '<b>', type: 'alien', ratio: [-1, 'x'], days: -3, place: 'mars' }).rec;
+  check('Ungültige Werte bereinigt', evil.type === 'custom' && evil.ratio.join() === '0,0,0' && evil.days === 0 && evil.place === 'fridge' && evil.id.length > 0);
+  check('Export → Import ändert nichts', JSON.stringify(MG.importCulture(roundtrip(c)).rec) === JSON.stringify(c));
+  check('Aus neuerer Version: erkannt, nichts verloren', MG.importCulture({ ...raw, v: 99 }).newer === true && MG.importCulture({ ...raw, v: 99 }).rec.v === 99);
+  check('Alle Kultur-Arten vorhanden', ['rye', 'wheat', 'spelt', 'madre', 'licoli', 'yeastwater', 'custom'].every((t) => C.CULTURE_TYPES[t]));
+}
+
+// ---------- 3g) Sicherung aus App 2.1 (Schema 6) → Schema 7 + Fehlerbehebungen 2.2 ----------
+{
+  group('Sicherung aus App 2.1 (backup-format2-app2.1.json) + Prüfung 2.2');
+  const f = await load('backup-format2-app2.1.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 7, `v=${r.v}`);
+  check('Vorteig: keine Mischung, keine Zutaten, keine Stufen-Kette (eindeutig ergänzt)', r.preferments[0].milkShare === 0 && r.preferments[0].extras.length === 0 && r.preferments[0].starterFrom === '');
+  const c = C.calc(r);
+  check('Milch im Dampfl wird von der MILCH abgezogen, nicht vom Milchpulver', near(c.main.extras[0].g, 250 - 40, 0.01) && near(c.main.extras[1].g, 15, 0.01));
+  check('Milchpulver zählt nicht als Flüssigkeit', C.liquidShare('Milchpulver') < 0.05 && C.liquidShare('Milch') > 0.8);
+  check('Kultur aus der Sicherung bleibt lesbar', MG.importCulture(f.cultures[0]).rec.name === 'Roggensauer');
+  // Vorheizen „zusammen fertig“: Gare früher beendet → Ofen startet ERST DANN und braucht seine 45 min
+  const m = 60000, tl = C.timeline([{ kind: 'proof', durationMin: 120, doneAt: 30 * m }, { kind: 'preheat', durationMin: 45, parallel: true, align: 'end' }, { kind: 'bake', durationMin: 30 }], 0, 31 * m);
+  check('Früh beendete Gare: Vorheizen 30–75 min, Backen ab 75 min', tl[1].start === 30 * m && tl[1].end === 75 * m && tl[2].start === 75 * m, `${tl[1].start / m}–${tl[1].end / m}`);
+  const tl2 = C.timeline([{ kind: 'proof', durationMin: 120, doneAt: 100 * m }, { kind: 'preheat', durationMin: 45, parallel: true, align: 'end' }, { kind: 'bake', durationMin: 30 }], 0, 101 * m);
+  check('Gare kurz vor Ende beendet: Vorheizen lief schon (75–120), Backen nach dem Vorheizen', tl2[1].start === 75 * m && tl2[2].start === 120 * m);
+  // Mehrstufiger Sauerteig (Detmolder Prinzip): Anfrisch- → Grund- → Vollsauer
+  const base = C.blankRecipe('bread');
+  Object.assign(base, { yield: { mode: 'flour', flour: 1000, count: 1, pieceWeight: 0, loss: 0 }, flours: [{ name: 'Roggenmehl 1150', pct: 100 }], water: { pct: 75, temp: '', icePct: '' }, salt: 2, yeastPct: 0 });
+  const s1 = C.makePf('levain', { id: 'st1', name: 'Anfrischsauer', flourPct: 2.5, hydration: 100, starterPct: 50, starterHydration: 100 });
+  const s2 = C.makePf('levain', { id: 'st2', name: 'Grundsauer', flourPct: 12.5, hydration: 70.4, starterFrom: 'st1' });
+  const s3 = C.makePf('levain', { id: 'st3', name: 'Vollsauer', flourPct: 30, hydration: 87.666667, starterFrom: 'st2' });
+  const chain = MG.importRecipe({ ...roundtrip(base), v: MG.SCHEMA, preferments: [s1, s2, s3] }).rec;
+  const cc = C.calc(chain);
+  check('Stufen-Kette bleibt erhalten (Import)', chain.preferments[1].starterFrom === 'st1' && chain.preferments[2].starterFrom === 'st2');
+  check('Anfrischsauer: 10 g Anstellgut + 20 g Mehl + 20 g Wasser', near(cc.pfs[0].starter, 10, 0.05) && near(cc.pfs[0].freshFlour, 20, 0.05) && near(cc.pfs[0].freshWater, 20, 0.05));
+  check('Grundsauer: ganzer Anfrischsauer (50 g) + 100 g Mehl + 63 g Wasser', near(cc.pfs[1].starter, 50, 0.05) && near(cc.pfs[1].freshFlour, 100, 0.05) && near(cc.pfs[1].freshWater, 63, 0.05));
+  check('Vollsauer: ganzer Grundsauer (213 g) + 175 g Mehl + 175 g Wasser', near(cc.pfs[2].starter, 213, 0.05) && near(cc.pfs[2].freshFlour, 175, 0.05) && near(cc.pfs[2].freshWater, 175, 0.1));
+  check('Hauptteig: nur der Vollsauer (563 g) + 700 g Mehl + 487 g Wasser; Teig 1770 g', near(cc.main.flours[0].g, 700, 0.05) && near(cc.main.water, 487, 0.1) && near(cc.D, 1770, 0.5)
+    && cc.pfs[0].consumed && cc.pfs[1].consumed && !cc.pfs[2].consumed);
+  check('Stufe ohne vorige Stufe in der Kette → zurückgesetzt', MG.importRecipe({ ...roundtrip(base), preferments: [{ ...s2, starterFrom: 'gibtsnicht' }] }).rec.preferments[0].starterFrom === '');
+  // Tangzhong aus Wasser UND Milch, Zutaten im Vorteig (Panettone)
+  const mb = MG.importRecipe({ ...roundtrip(base), preferments: [C.makePf('tangzhong', { flourPct: 5, hydration: 600, liquid: 'mix', milkShare: 50 })], extras: [{ name: 'Milch', pct: 30 }, { name: 'Zucker', pct: 10 }] }).rec;
+  const cm = C.calc(mb);
+  check('Gemischt: 300 g Flüssigkeit = 150 g Wasser + 150 g Milch', near(cm.pfs[0].milkG, 150, 0.05) && near(cm.main.water, 750 - 150, 0.05) && near(cm.main.extras[0].g, 300 - 150, 0.05));
+  const pt = MG.importRecipe({ ...roundtrip(mb), preferments: [C.makePf('madre', { flourPct: 30, extras: [{ name: 'Zucker', pct: 4 }] })] }).rec;
+  const cpt = C.calc(pt);
+  check('Zutat im Vorteig: 40 g Zucker im Vorteig, 60 g im Hauptteig, gesamt 100 g', near(cpt.pfs[0].extras[0].g, 40, 0.01) && near(cpt.main.extras[1].g, 60, 0.01) && near(cpt.main.extras[1].total, 100, 0.01));
+  // KI-Brücke: Einheiten, Milchpulver, Kette, Zutaten im Vorteig, Stückzahl
+  const KI = await import('../ki-import.js');
+  const kc = KI.kiToRecipe({ name: 'Torte', category: 'cake', pan: { shape: 'round', diameter_cm: 26 }, parts: [{ name: 'Teig', items: [{ name: 'Backpulver', amount: 3, unit: 'gestr. TL' }, { name: 'Sauerkirschen', amount: 1, unit: 'Glas' }, { name: 'Sahne', amount: 0.5, unit: 'l' }] }] }, { schema: MG.SCHEMA });
+  const it = kc.recipe.parts[0].items;
+  check('KI: „3 gestr. TL“ → 3 TL, „1 Glas“ → 1 Stk (Glas) + Hinweis, 0,5 l → 500 ml', it[0].unit === 'TL' && it[0].amount === 3 && it[1].unit === 'Stk' && /Glas/.test(it[1].name) && kc.warnings.some((w) => /Glas/.test(w)) && it[2].unit === 'ml' && it[2].amount === 500);
+  const kmb = MG.importRecipe(KI.kiToRecipe({ name: 'Milk Bread', category: 'fine', yeastType: 'dry', pieces: { count: 4, weight_g: 175 },
+    preferments: [{ type: 'tangzhong', flour_g: 14, water_g: 43, milk_g: 43 }],
+    main: { flours: [{ name: 'Mehl', g: 300 }], water_g: 0, salt_g: 6, yeast_g: 9, extras: [{ name: 'Milchpulver', g: 14 }, { name: 'Milch', g: 113 }, { name: 'Zucker', g: 50 }] } }, { schema: MG.SCHEMA }).recipe).rec;
+  const ckm = C.calc(kmb);
+  check('KI Milchbrot: Tangzhong gemischt, Milch gesamt 156 g (nicht beim Milchpulver), 4 Stück', kmb.preferments[0].liquid === 'mix' && near(ckm.pfs[0].milkG, 43, 0.05)
+    && near(ckm.main.extras.find((e) => e.name === 'Milch').total, 156, 0.1) && near(ckm.main.extras.find((e) => e.name === 'Milchpulver').total, 14, 0.05) && kmb.yield.mode === 'pieces' && kmb.yield.count === 4);
+  const kp = MG.importRecipe(KI.kiToRecipe({ name: 'Panettone', category: 'fine', pieces: { count: 1 },
+    preferments: [{ type: 'madre', name: 'Primo impasto', flour_g: 245, water_g: 100, starter_g: 100, starter_hydration: 45, extras: [{ name: 'Zucker', g: 63 }, { name: 'Butter', g: 63 }, { name: 'Eigelb', g: 58 }] }],
+    main: { flours: [{ name: 'Mehl', g: 65 }], water_g: 0, salt_g: 4, extras: [{ name: 'Zucker', g: 63 }, { name: 'Eigelb', g: 58 }, { name: 'Butter', g: 50 }] } }, { schema: MG.SCHEMA }).recipe).rec;
+  const ckp = C.calc(kp);
+  check('KI Panettone: Zucker 63 g im ersten Teig, 63 g im zweiten (gesamt 126 g)', near(ckp.pfs[0].extras.find((e) => e.name === 'Zucker').g, 63, 0.1) && near(ckp.main.extras.find((e) => e.name === 'Zucker').g, 63, 0.1));
+  const kd = MG.importRecipe(KI.kiToRecipe({ name: 'Roggen 3-stufig', category: 'bread', preferments: [{ type: 'levain', name: 'Anfrischsauer', flour_g: 20, water_g: 20, starter_g: 10 }, { type: 'levain', name: 'Grundsauer', starter_from: 'pf1', flour_g: 100, water_g: 63 }, { type: 'levain', name: 'Vollsauer', starter_from: 'pf2', flour_g: 175, water_g: 175 }],
+    main: { flours: [{ name: 'Roggenmehl', g: 700 }], water_g: 487, salt_g: 20 } }, { schema: MG.SCHEMA }).recipe).rec;
+  const ckd = C.calc(kd);
+  check('KI 3-stufiger Sauerteig: 1000 g Mehl, Kette erkannt, Teig 1770 g', near(ckd.F, 1000, 0.05) && kd.preferments[2].starterFrom === kd.preferments[1].id && near(ckd.D, 1770, 0.5));
+}
+
 // ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
 {
   group('Rezept aus KI-Antwort (ki-import.js)');
@@ -238,6 +401,13 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   const evil = imp({ name: '<img src=x onerror=alert(1)>', category: 'evil', main: { flours: [{ name: 'Mehl', g: 100 }], water_g: 60 }, steps: [{ kind: 'hack', location: 'mars', minutes: -5 }] });
   check('Unbekannte Werte werden bereinigt (Kategorie, Schritt-Art, Ort, Dauer)', evil.category === '' && evil.steps[0].kind === 'other' && evil.steps[0].location === 'rt' && evil.steps[0].durationMin === 0);
   check('Auftragstext enthält Link bzw. Text', KI.buildPrompt('https://example.com/rezept').includes('https://example.com/rezept') && KI.buildPrompt('500 g Mehl').includes('500 g Mehl'));
+  // e) Echte Antwort (Milchbrot): deutsche Anführungszeichen „…“ im Notiz-Text dürfen nicht stören
+  const milch = await (await fetch(`./fixtures/ki-antwort-milchbrot.txt?t=${Date.now()}`)).text();
+  const mb = err(() => KI.extractJSON(milch)) || imp(KI.extractJSON(milch));
+  check('Milchbrot mit „Anführungszeichen“ im Text wird gelesen', typeof mb === 'object' && mb.name === 'Brioche' && mb.notes.includes('„Mehl (Tangzhong)“') && mb.category === 'fine', typeof mb === 'string' ? mb : '');
+  check('Milchbrot: 840 g Mehl, Milch als wirksame Flüssigkeit', typeof mb === 'object' && near(C.calc(mb).F, 840, 0.01) && C.calc(mb).totals.hydEff > 50);
+  const al = imp({ name: 'x', main: { flours: [{ name: 'Mehl', g: 500 }], water_g: 350 }, steps: [{ kind: 'proof', minutes: 60 }, { kind: 'preheat', minutes: 45, parallel: true, align: 'end' }] });
+  check('KI: „Zusammen fertig“ (align end) wird übernommen', al.steps[1].parallel && al.steps[1].align === 'end');
 }
 
 // ---------- 4) Alle Vorlagen überstehen Export → Import ----------

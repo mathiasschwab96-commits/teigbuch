@@ -1,0 +1,36 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 6,
+ "appVersion": "2.1.0",
+ "exportedAt": "2026-11-23T14:00:00.000Z",
+ "recipes": [
+  {
+   "v": 6,
+   "id": "fx6zopf",
+   "name": "Hefezopf mit Dampfl (Sicherung 2.1)",
+   "category": "fine",
+   "description": "Testrezept im Format von App 2.1.0",
+   "source": "", "tags": [], "favorite": false, "photos": [], "cover": null,
+   "yield": { "mode": "flour", "count": 1, "pieceWeight": 0, "flour": 500, "loss": 0 },
+   "flours": [{ "name": "Weizenmehl 550", "pct": 100 }],
+   "water": { "pct": 0, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 }, "salt": 1, "yeastType": "fresh", "yeastPct": 0,
+   "extras": [{ "name": "Milch", "pct": 50 }, { "name": "Milchpulver", "pct": 3 }, { "name": "Butter", "pct": 16 }],
+   "preferments": [
+    { "id": "fx6pf1", "type": "dampfl", "name": "Dampfl", "flourPct": 8, "hydration": 100, "yeastPct": 50, "starterPct": 0, "starterHydration": 100, "flourName": "Weizenmehl 550", "liquid": "milk", "saltPct": 0, "seeds": false }
+   ],
+   "steps": [
+    { "id": "fx6s1", "kind": "prep", "name": "Dampfl", "durationMin": 5, "location": "rt", "temp": "", "stage": "fx6pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx6s2", "kind": "mix", "name": "Kneten", "durationMin": 15, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx6s3", "kind": "bake", "name": "Backen", "durationMin": 35, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null }
+   ],
+   "ddt": 26, "notes": "",
+   "lamination": { "pct": 0, "name": "" }, "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 }, "parts": [],
+   "createdAt": 1795420000000, "updatedAt": 1795420100000
+  }
+ ],
+ "logs": [],
+ "cultures": [{ "v": 6, "id": "fx6cult", "name": "Roggensauer", "type": "rye", "ratio": [1, 5, 5], "hydration": 100, "days": 7, "place": "fridge", "lead": 12, "notes": "", "feeds": [{ "at": 1795420000000, "g": "", "temp": null, "rise": null, "note": "" }], "createdAt": 1795420000000, "updatedAt": 1795420000000 }],
+ "photos": []
+}

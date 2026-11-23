@@ -1,0 +1,69 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 5,
+ "appVersion": "2.0.0",
+ "exportedAt": "2026-11-23T12:00:00.000Z",
+ "recipes": [
+  {
+   "v": 5,
+   "id": "fx5poolish",
+   "name": "Pizza mit Poolish (Sicherung 2.0)",
+   "category": "pizza",
+   "description": "Testrezept im Format von App 2.0.0",
+   "source": "",
+   "tags": [],
+   "favorite": false,
+   "photos": [],
+   "cover": null,
+   "yield": { "mode": "pieces", "count": 4, "pieceWeight": 250, "flour": 600, "loss": 0 },
+   "flours": [{ "name": "Tipo 00", "pct": 100 }],
+   "water": { "pct": 70, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 },
+   "salt": 2.8,
+   "yeastType": "fresh",
+   "yeastPct": 0.1,
+   "extras": [],
+   "preferments": [
+    { "id": "fx5pf1", "type": "poolish", "name": "Poolish", "flourPct": 30, "hydration": 100, "yeastPct": 0.3, "starterPct": 0, "starterHydration": 100, "flourName": "Tipo 00" }
+   ],
+   "steps": [
+    { "id": "fx5s1", "kind": "prep", "name": "Poolish ansetzen", "durationMin": 10, "location": "rt", "temp": "", "stage": "fx5pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx5s2", "kind": "rest", "name": "Poolish reifen", "durationMin": 960, "location": "fridge", "temp": "", "stage": "fx5pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx5s3", "kind": "mix", "name": "Hauptteig", "durationMin": 20, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx5s4", "kind": "proof", "name": "Ballengare", "durationMin": 240, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx5s5", "kind": "preheat", "name": "Ofen vorheizen", "durationMin": 45, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": true, "align": "end", "repeat": null },
+    { "id": "fx5s6", "kind": "bake", "name": "Backen", "durationMin": 30, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null }
+   ],
+   "ddt": 23,
+   "notes": "",
+   "lamination": { "pct": 0, "name": "" },
+   "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 },
+   "parts": [],
+   "createdAt": 1795400000000,
+   "updatedAt": 1795400100000
+  }
+ ],
+ "logs": [
+  {
+   "v": 5,
+   "id": "fx5log1",
+   "recipeId": "fx5poolish",
+   "date": "2026-11-23",
+   "rating": 5,
+   "sub": {},
+   "params": { "hydration": 72, "salt": 2.8, "yeastPct": 0.19, "pf": "Poolish 30 %", "count": 4, "pieceWeight": 255, "totalHours": 21, "flour": "Tipo 00", "pan": "" },
+   "roomTemp": "", "doughTemp": "", "fridgeTemp": "", "waterTemp": "", "iceG": "", "oven": "", "bakeTemp": "", "bakeTime": "",
+   "notes": "", "nextTime": "", "photos": [], "sessionId": null,
+   "protocol": {
+    "startAt": 1795400000000, "endAt": 1795475600000, "hydration": 72, "baseHydration": 70, "dough": 1020,
+    "steps": [{ "name": "Hauptteig", "kind": "mix", "loc": "rt", "plan": 20, "act": 25, "start": 1795458000000, "end": 1795459500000, "par": "", "temp": "", "stage": "Hauptteig", "note": "etwas fest", "feel": "firm", "photos": [], "meas": { "dough": 24 }, "shift": null, "comp": null }],
+    "blocks": [{ "title": "Hauptteig", "rows": [{ "name": "Wasser", "txt": "263 g", "was": "250 g" }] }],
+    "changes": [{ "stage": "Hauptteig", "name": "Wasser", "from": "250 g", "to": "263 g" }],
+    "pct": { "water": 72, "salt": 2.8, "yeast": 0.1, "oil": 0, "lam": 0, "flours": [{ "name": "Tipo 00", "pct": 100 }], "extras": [], "pfs": [{ "id": "fx5pf1", "flourPct": 30, "hydration": 100, "starterPct": 0, "yeastPct": 0.3 }], "cake": [] }
+   },
+   "createdAt": 1795476000000, "updatedAt": 1795476000000
+  }
+ ],
+ "photos": []
+}

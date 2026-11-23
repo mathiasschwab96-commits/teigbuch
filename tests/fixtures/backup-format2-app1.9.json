@@ -1,0 +1,59 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 4,
+ "appVersion": "1.9.0",
+ "exportedAt": "2026-11-22T12:00:00.000Z",
+ "recipes": [
+  {
+   "v": 4,
+   "id": "fx4brot",
+   "name": "Landbrot mit Vorheizen (Sicherung 1.9)",
+   "category": "bread",
+   "description": "Testrezept im Format von App 1.9.0",
+   "source": "",
+   "tags": [],
+   "favorite": false,
+   "photos": [],
+   "cover": null,
+   "yield": { "mode": "pieces", "count": 1, "pieceWeight": 900, "flour": 500, "loss": 0 },
+   "flours": [{ "name": "Weizenmehl 550", "pct": 100 }],
+   "water": { "pct": 72, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 },
+   "salt": 2,
+   "yeastType": "fresh",
+   "yeastPct": 0.5,
+   "extras": [],
+   "preferments": [],
+   "steps": [
+    { "id": "fx4s1", "kind": "mix", "name": "Kneten", "durationMin": 15, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx4s2", "kind": "bulk", "name": "Stockgare", "durationMin": 120, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx4s3", "kind": "proof", "name": "Stückgare", "durationMin": 60, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null },
+    { "id": "fx4s4", "kind": "preheat", "name": "Ofen vorheizen", "durationMin": 45, "location": "oven", "temp": "250 °C", "stage": null, "notes": "", "parallel": true, "repeat": null },
+    { "id": "fx4s5", "kind": "bake", "name": "Backen", "durationMin": 40, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "repeat": null }
+   ],
+   "ddt": 25,
+   "notes": "",
+   "lamination": { "pct": 0, "name": "" },
+   "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 },
+   "parts": [],
+   "createdAt": 1795250000000,
+   "updatedAt": 1795250100000
+  }
+ ],
+ "logs": [
+  {
+   "v": 4,
+   "id": "fx4log1",
+   "recipeId": "fx4brot",
+   "date": "2026-11-21",
+   "rating": 4,
+   "sub": { "crust": 4 },
+   "params": { "hydration": 72, "salt": 2, "yeastPct": 0.5, "pf": "direkt", "count": 1, "pieceWeight": 900, "totalHours": 4.5, "flour": "Weizenmehl 550", "pan": "" },
+   "roomTemp": "22", "doughTemp": "25", "fridgeTemp": "", "waterTemp": "", "iceG": "", "oven": "Backofen", "bakeTemp": "250", "bakeTime": "40 min",
+   "notes": "", "nextTime": "mehr Wasser", "photos": [], "sessionId": null,
+   "createdAt": 1795260000000, "updatedAt": 1795260000000
+  }
+ ],
+ "photos": []
+}
