@@ -599,3 +599,15 @@ body[data-view="edit"] .wiz-foot { bottom: 0; padding-bottom: calc(10px + env(sa
 .pt-d { font-size: .9rem; text-align: right; white-space: nowrap; }
 .pt-r.par .pt-n { padding-left: 14px; font-weight: 500; }
 .pt-x { padding: 0 0 10px 50px; }
+/* ---------- 2.4: Mehlmischung im Vorteig, Anpassen (Mehl tauschen, Zutat dazu), Gärzeit & Hefe, Umstellen ---------- */
+.w110 { flex: 0 0 112px; width: 112px; padding-left: 8px; padding-right: 4px; }
+.pf-mix { display: grid; gap: 6px; margin-top: 10px; }
+.pf-mix .fld-l { display: block; }
+.adj-add { flex-wrap: wrap; }
+.adj-add .adj-n { flex: 1 1 100%; }
+.adj-add .adj-sw { flex: 1 1 0; width: auto; min-width: 0; }
+.adj .chips { margin-top: 6px; }
+.yfit .adj-row span:first-child { min-width: 0; }
+.yfit .check { margin-top: 8px; }
+.conv-list { margin: 0 0 8px; padding-left: 18px; text-align: left; }
+.conv-list li { margin: 3px 0; }

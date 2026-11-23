@@ -5,7 +5,7 @@
 // Teigbuch-Rezept (Bäckerprozente) umgerechnet. Das Ergebnis läuft danach wie jede Datei von
 // außen über MG.importRecipe (Bereinigung) und öffnet sich als Entwurf im Editor.
 // Es wird keine KI direkt angesprochen und kein Schlüssel gespeichert.
-import { num, uid, PF_TYPES, STEP_KINDS, LOCATIONS, UNITS, liquidShare, milkIndex, sameName, calc } from './calc.js';
+import { num, uid, PF_TYPES, STEP_KINDS, LOCATIONS, UNITS, liquidShare, liquidIndex, sameName, calc } from './calc.js';
 
 export const KI_FORMAT = 'ki-1';
 
@@ -13,7 +13,7 @@ export const KI_FORMAT = 'ki-1';
 const EXAMPLE = {
   teigbuch: KI_FORMAT, name: '', category: 'pizza', description: '', source: '', yeastType: 'fresh',
   pieces: { count: 4, weight_g: 280 },
-  preferments: [{ type: 'biga', name: 'Biga', flour_name: 'Tipo 00', flour_g: 200, water_g: 100, milk_g: 0, yeast_g: 1, starter_g: 0, starter_hydration: 100, starter_from: null, salt_g: 0, seeds: false, extras: [] }],
+  preferments: [{ type: 'biga', name: 'Biga', flour_name: 'Tipo 00', flour_g: 200, water_g: 100, milk_g: 0, liquid_name: '', yeast_g: 1, starter_g: 0, starter_hydration: 100, starter_from: null, salt_g: 0, seeds: false, extras: [] }],
   main: { flours: [{ name: 'Tipo 00', g: 500 }], water_g: 300, ice_g: 0, water_temp_c: null, salt_g: 15, yeast_g: 0, oil_g: 0, extras: [{ name: 'Honig', g: 5 }] },
   lamination: { name: '', g: 0 },
   steps: [{ kind: 'prep', name: 'Biga ansetzen', minutes: 10, location: 'rt', temp: '', stage: 'pf1', parallel: false, repeat: null, notes: '' }],
@@ -55,8 +55,8 @@ Regeln für FORMAT A:
 - category: "pizza", "bread", "fine" (Feingebäck: Croissant, Plunder, Brioche, Hefezopf …) oder "other".
 - Milch, Eier, Butter, Zucker im Teig als "extras" (Eier in Gramm, 1 Ei ≈ 50 g). Butter zum Tourieren/Einschlagen (Croissant, Plunder) NICHT in extras, sondern in "lamination" ({"name": "Butter", "g": Menge}); sonst g: 0. Touren als Schritte mit kind "laminate".
 - Vorteige UND Vorstufen gehören in "preferments" – nur ihre eigenen Zutaten. "main" enthält NUR, was beim Hauptteig zusätzlich dazukommt (nicht den Vorteig selbst). Kein Vorteig: "preferments": [].
-- preferments.type: "biga", "poolish", "levain" (Sauerteig), "madre" (Lievito Madre), "dampfl" (Dampfl/Hefestück/Sponge), "pate" (Pâte fermentée/Altteig), "tangzhong" (Tangzhong/Kochstück/Mehlkochstück), "yudane" (Yudane/Brühstück), "quell" (Quellstück) oder "custom". starter_g = Anstellgut bzw. Madre, das in diesen Vorteig kommt; starter_hydration in % (meist 100, Madre meist 50). flour_name = Mehlsorte des Vorteigs (bei Saaten deren Name).
-- Zusätzlich je Vorteig: "water_g" = Wasser, "milk_g" = Milch (beides möglich, z. B. Tangzhong aus Wasser UND Milch), "salt_g" (Salz im Vorteig, sonst 0), "seeds": true bei einem Quellstück aus Saaten (flour_g = Saaten), sonst false, "extras": weitere Zutaten, die schon IN diesen Vorteig kommen (z. B. Zucker, Butter, Eigelb beim ersten Panettone-Teig) als [{"name": "Zucker", "g": 63}] – diese NICHT zusätzlich in main.extras.
+- preferments.type: "biga", "poolish", "levain" (Sauerteig), "madre" (Lievito Madre), "dampfl" (Dampfl/Hefestück/Sponge), "pate" (Pâte fermentée/Altteig), "tangzhong" (Tangzhong/Kochstück/Mehlkochstück), "yudane" (Yudane/Brühstück), "quell" (Quellstück) oder "custom". starter_g = Anstellgut bzw. Madre, das in diesen Vorteig kommt; starter_hydration in % (meist 100, Madre meist 50). flour_name = Mehlsorte des Vorteigs (bei Saaten deren Name). Mehrere Mehlsorten IM SELBEN Vorteig (z. B. Sauerteig aus Roggen- und Weizenmehl): zusätzlich "flours": [{"name": "Roggenmehl 1150", "g": 80}, {"name": "Weizenmehl 550", "g": 20}] (flour_g = Summe).
+- Zusätzlich je Vorteig: "water_g" = Wasser, "milk_g" = Milch (beides möglich, z. B. Tangzhong aus Wasser UND Milch); ist es eine andere Flüssigkeit (Bier, Buttermilch, Joghurt …), deren Menge in "milk_g" und den Namen in "liquid_name" (z. B. "Bier"). "salt_g" (Salz im Vorteig, sonst 0), "seeds": true bei einem Quellstück aus Saaten oder Altbrot (flour_g = Saaten bzw. Brot, flour_name z. B. "Leinsamen" oder "Altbrot"), sonst false, "extras": weitere Zutaten, die schon IN diesen Vorteig kommen (z. B. Zucker, Butter, Eigelb beim ersten Panettone-Teig) als [{"name": "Zucker", "g": 63}] – diese NICHT zusätzlich in main.extras.
 - Mehrstufiger Sauerteig (z. B. Anfrisch-, Grund-, Vollsauer) bzw. erster/zweiter Teig: jede Stufe als eigener Vorteig; nutzt eine Stufe die GANZE vorige Stufe, dort "starter_from": "pf1" (bzw. "pf2") und nur die frisch zugegebenen Mengen in flour_g/water_g. In "main" kommt nur die letzte Stufe.
 - Kommt Anstellgut/Madre direkt in den Hauptteig (ohne eigenen Vorteig), lege dafür einen Vorteig an: {"type": "levain", "name": "Anstellgut", "flour_g": 0, "water_g": 0, "starter_g": <Menge>, "starter_hydration": <Hydration>}.
 - water_g = flüssiges Wasser OHNE Eis; Eis separat in ice_g; water_temp_c = Wassertemperatur in °C oder null. Milch, Bier usw. als "extras".
@@ -187,8 +187,11 @@ export function kiToRecipe(data, { schema = 1 } = {}) {
     const s = src ? 0 : g(p?.starter_g);
     const sh = num(p?.starter_hydration) > 0 ? num(p.starter_hydration) : (type === 'madre' ? 50 : 100);
     const sFlour = src ? src.flour : s / (1 + sh / 100), sWater = src ? src.water : s - sFlour;
-    const freshF = g(p?.flour_g);
-    // Flüssigkeit: water_g (+ milk_g) – "liquid": "milk" ohne milk_g heißt: water_g ist Milch
+    // Mehl: flour_g (eine Sorte) oder "flours": [{name, g}] (Mischung im Vorteig, ab App 2.4)
+    const mix = (Array.isArray(p?.flours) ? p.flours : []).map((f) => ({ name: txt(f?.name, 80).trim() || defaultFlour, g: g(f?.g) })).filter((f) => f.g > 0);
+    const freshF = mix.length ? mix.reduce((a, f) => a + f.g, 0) : g(p?.flour_g);
+    // Flüssigkeit: water_g (+ milk_g) – "liquid": "milk" ohne milk_g heißt: water_g ist Milch; liquid_name = Bier, Buttermilch … statt Milch
+    const liqName = txt(p?.liquid_name, 60).trim();
     let waterG = g(p?.water_g), milkG = g(p?.milk_g);
     if (p?.liquid === 'milk' && !milkG) { milkG = waterG; waterG = 0; }
     const freshW = waterG + milkG;
@@ -196,15 +199,18 @@ export function kiToRecipe(data, { schema = 1 } = {}) {
     const seeds = p?.seeds === true;
     if (src) src.consumed = true;
     const extras = (Array.isArray(p?.extras) ? p.extras : []).map((e) => ({ name: txt(e?.name, 80).trim() || 'Zutat', g: g(e?.g) })).filter((e) => e.g > 0);
-    pfs.push({ id: uid(), type, name: txt(p?.name, 80).trim() || PF_TYPES[type].label, flourName: txt(p?.flour_name, 80).trim() || (seeds ? 'Saaten' : defaultFlour),
-      flour, water, yeast: g(p?.yeast_g), starter: s, sh, freshF, waterG: waterG + (src ? 0 : sWater), milkG, freshW, salt: g(p?.salt_g), seeds, src, extras, i });
+    pfs.push({ id: uid(), type, name: txt(p?.name, 80).trim() || PF_TYPES[type].label, flourName: (seeds ? '' : mix[0]?.name) || txt(p?.flour_name, 80).trim() || (seeds ? 'Saaten' : defaultFlour),
+      mix: seeds ? [] : mix, liqName, flour, water, yeast: g(p?.yeast_g), starter: s, sh, freshF, waterG: waterG + (src ? 0 : sWater), milkG, freshW, salt: g(p?.salt_g), seeds, src, extras, i });
   });
   const pfOk = pfs.filter((p) => p.flour > 0);
 
   // Gesamtmehl je Sorte (Saaten zählen nicht; eine verbrauchte Stufe steckt schon in der nächsten)
   const blend = new Map();
-  mainFlours.forEach((f) => blend.set(f.name, (blend.get(f.name) || 0) + f.g));
-  pfOk.filter((p) => !p.seeds && !p.consumed).forEach((p) => blend.set(p.flourName, (blend.get(p.flourName) || 0) + p.flour));
+  const addB = (name, gr) => blend.set(name, (blend.get(name) || 0) + gr);
+  mainFlours.forEach((f) => addB(f.name, f.g));
+  pfOk.filter((p) => !p.seeds && !p.consumed).forEach((p) => {
+    if (p.mix.length > 1) { p.mix.forEach((f) => addB(f.name, f.g)); addB(p.flourName, p.flour - p.freshF); } else addB(p.flourName, p.flour);
+  });
   const F = [...blend.values()].reduce((a, b) => a + b, 0);
   if (!(F > 0)) throw new Error('Im Rezept-Code wurde keine Mehlmenge gefunden.');
 
@@ -217,8 +223,8 @@ export function kiToRecipe(data, { schema = 1 } = {}) {
   // Milch, Ei & Co. zählen bei der Plausibilitätsprüfung mit (Brioche hat oft gar kein Wasser)
   const exIn = (Array.isArray(main.extras) ? main.extras : []).map((e) => ({ name: txt(e?.name, 80).trim() || 'Zutat', g: g(e?.g) }));
   // Die Zutaten-Liste steht im Rezept für die GESAMTMENGE: Milch und Zutaten aus Vorteigen dazuzählen
-  const addEx = (name, gr) => { const ex = name === 'Milch' ? exIn[milkIndex(exIn)] : exIn.find((e) => sameName(e.name, name)); if (ex) ex.g += gr; else exIn.push({ name, g: gr }); };
-  if (pfMilk > 0) addEx('Milch', pfMilk);
+  const addEx = (name, gr) => { const ex = exIn[liquidIndex(exIn, name)]; if (ex) ex.g += gr; else exIn.push({ name, g: gr }); };
+  if (pfMilk > 0) pfOk.filter((p) => !p.seeds && p.milkG > 0).forEach((p) => addEx(p.liqName || 'Milch', p.milkG));
   pfOk.forEach((p) => p.extras.forEach((e) => addEx(e.name, e.g)));
   const effHyd = ((totalWater + exIn.reduce((a, e) => a + e.g * liquidShare(e.name), 0)) / F) * 100;
   if (effHyd < 35 || effHyd > 130) warnings.push(`Ungewöhnliche Hydration (${Math.round(effHyd)} %) – bitte die Flüssigkeitsmengen prüfen.`);
@@ -238,6 +244,8 @@ export function kiToRecipe(data, { schema = 1 } = {}) {
       saltPct: p.salt > 0 ? r4((p.salt / p.flour) * 100) : 0, seeds: p.seeds,
       extras: p.extras.map((e) => ({ name: e.name, pct: r4((e.g / F) * 100) })),
       starterFrom: p.src?.id || '',
+      flours: p.mix.length > 1 && p.freshF > 0 ? p.mix.map((f) => ({ name: f.name, pct: r2((f.g / p.freshF) * 100) })) : [],
+      liquidName: p.liqName && !sameName(p.liqName, 'Milch') ? p.liqName : '',
     };
   });
   const pfSalt = pfOk.reduce((a, p) => a + p.salt, 0);

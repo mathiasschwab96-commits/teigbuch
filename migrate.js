@@ -31,9 +31,12 @@
 //   7  App 2.2 – Vorteige: liquid 'mix' + milkShare (Wasser/Milch gemischt), extras [{name, pct}] (Zutaten im Vorteig,
 //               z. B. Zucker/Butter/Eigelb beim Panettone), starterFrom (mehrstufiger Sauerteig: vorige Stufe als Anstellgut).
 //               Bisher gab es nichts davon → leer, keine Rückfrage.
+//   8  App 2.4 – Vorteige: flours [{name, pct}] (Mehlmischung im Vorteig; leer = eine Sorte wie bisher über flourName),
+//               liquidName (Flüssigkeit statt Milch, z. B. Bier/Buttermilch; '' = Milch wie bisher).
+//               Bisher immer eine Sorte und Milch → leer, keine Rückfrage. flourName bleibt (erste Sorte) für ältere Apps.
 import { num, sanitizeRecipe, sanitizeLog, sanitizeCulture, CATEGORIES, isCake } from './calc.js';
 
-export const SCHEMA = 7;
+export const SCHEMA = 8;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -74,6 +77,12 @@ const RECIPE_MIGRATIONS = {
       ? { ...pf, milkShare: pf.milkShare ?? 0, extras: pf.extras ?? [], starterFrom: pf.starterFrom ?? '' } : pf));
     return r;
   },
+  // 7 → 8: bisher eine Mehlsorte je Vorteig und als Flüssigkeit nur Wasser/Milch
+  7: (r) => {
+    r.preferments = (Array.isArray(r.preferments) ? r.preferments : []).map((pf) => (pf && typeof pf === 'object'
+      ? { ...pf, flours: pf.flours ?? [], liquidName: pf.liquidName ?? '' } : pf));
+    return r;
+  },
 };
 
 const LOG_MIGRATIONS = {
@@ -85,9 +94,10 @@ const LOG_MIGRATIONS = {
   3: (l) => ({ ...l, params: { ...(l.params || {}), pan: l.params?.pan ?? '' } }),
   // 4 → 5: Backprotokoll gab es noch nicht → null (kann bei vorhandenem Backvorgang später übernommen werden)
   4: (l) => ({ ...l, protocol: l.protocol ?? null }),
-  // 5 → 6 und 6 → 7 (keine Änderung am Tagebuch)
+  // 5 → 6, 6 → 7 und 7 → 8 (keine Änderung am Tagebuch; Protokoll-pct.pfs kann ab 2.4 flours/extras enthalten – optional)
   5: (l) => l,
   6: (l) => l,
+  7: (l) => l,
 };
 
 function run(rec, migrations) {

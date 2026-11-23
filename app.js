@@ -8,7 +8,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -48,7 +48,7 @@ const calcFor = (r, ov) => (isCake(r) ? C.calcCake(r, ov) : calc(r, ov));
 
 // ---------- Funktionen an/aus ----------
 const feat = (k) => S.settings.features?.[k] !== false;
-const FEATURES = ['tempComp', 'handsFree', 'confirmEarly', 'adjust', 'nightOpt', 'pastry', 'cultures', 'qr'];
+const FEATURES = ['tempComp', 'handsFree', 'confirmEarly', 'adjust', 'nightOpt', 'yeastFit', 'pastry', 'cultures', 'convert', 'qr'];
 // Schritte eines Backvorgangs inkl. Temperatur-Ausgleich
 // (±-Verschiebungen per Knopf werden NACH dem Ausgleich addiert, damit +15 min auch +15 min bleiben)
 const effSteps = (s) => (feat('tempComp') ? C.compensateSteps(s.steps, { room: s.room, refRoom: S.settings.refRoom }) : s.steps)
@@ -534,14 +534,17 @@ function pfRows(x, yt) {
   const rows = [];
   const src = x.chained ? x.src : '';
   if (x.starter > 0) rows.push({ key: 'starter', type: src ? 'fixed' : 'starter', name: src ? 'Vorige Stufe (komplett)' : x.pf.type === 'madre' ? 'Lievito Madre (aufgefrischt)' : 'Anstellgut', hint: src ? '' : `${fmtNum(x.pf.starterHydration ?? 100, 0)} % Hydration`, g: x.starter });
-  rows.push({ key: 'flour', type: x.seeds ? 'seeds' : 'flour', name: x.seeds ? (x.flourName || 'Saaten') : (x.flourName || 'Mehl'), hint: x.seeds ? 'zählt nicht zum Mehl' : '', g: x.freshFlour });
-  // Wasser / Milch / gemischt – nur echtes Wasser ist „water“ (für Hydration, Ziel-Hydration, +10 g Wasser)
-  const mix = x.milk && x.milkG < x.freshWater - 0.05;
-  rows.push({ key: 'water', type: x.seeds ? 'soak' : x.milk ? 'milk' : 'water', name: x.seeds ? 'Quellwasser' : mix ? 'Wasser + Milch' : x.milk ? 'Milch' : 'Wasser',
-    hint: mix ? `davon ${fmtG(x.milkG)} Milch` : '', g: x.freshWater });
+  // Mehl: eine Sorte (Schlüssel „flour“) oder Mischung (fl0, fl1 …); beim Backen dazugemischte Sorten (a0 …)
+  const parts = !x.seeds && (x.flourParts || []).length ? x.flourParts : [{ name: x.flourName, g: x.freshFlour }];
+  const multi = parts.filter((q) => !q._key).length > 1;
+  parts.forEach((q, k) => { rows.push({ key: q._key || (multi ? `fl${k}` : 'flour'), type: x.seeds ? 'seeds' : 'flour', name: x.seeds ? (q.name || 'Saaten') : (q.name || 'Mehl'), hint: x.seeds ? 'zählt nicht zum Mehl' : '', g: q.g }); });
+  // Wasser / Milch & Co. / gemischt – nur echtes Wasser ist „water“ (für Hydration, Ziel-Hydration, +10 g Wasser)
+  const ln = x.liqName || 'Milch', mix = x.milk && x.milkG < x.freshWater - 0.05;
+  rows.push({ key: 'water', type: x.seeds ? 'soak' : x.milk ? 'milk' : 'water', name: x.seeds ? 'Quellwasser' : mix ? `Wasser + ${ln}` : x.milk ? ln : 'Wasser',
+    hint: mix ? `davon ${fmtG(x.milkG)} ${ln}` : '', g: x.freshWater });
   if (x.yeast > 0) rows.push({ key: 'yeast', type: 'yeast', name: yeastName(yt), g: x.yeast });
   if (x.salt > 0) rows.push({ key: 'salt', type: 'salt', name: 'Salz', g: x.salt });
-  (x.extras || []).forEach((e, k) => rows.push({ key: `x${k}`, type: 'fixed', name: e.name || 'Zutat', g: e.g }));
+  (x.extras || []).forEach((e, k) => rows.push({ key: `x${k}`, type: 'extra', name: e.name || 'Zutat', g: e.g }));
   return rows;
 }
 function mainRows(c, yt) {
@@ -557,7 +560,7 @@ function mainRows(c, yt) {
   if (c.main.yeast > 0) rows.push({ key: 'yeast', type: 'yeast', name: yeastName(yt), g: c.main.yeast });
   if (c.main.oil > 0) rows.push({ key: 'oil', type: 'oil', name: 'Öl', g: c.main.oil });
   const late = [];
-  c.main.extras.forEach((e, j) => { if (e.g > 0) (LATE.test(e.name || '') ? late : rows).push({ key: `x${j}`, type: 'extra', name: e.name || 'Zutat', g: e.g, hint: LATE.test(e.name || '') ? 'zum Schluss unterarbeiten' : '' }); });
+  c.main.extras.forEach((e, j) => { if (e.g > 0 || e._key) (LATE.test(e.name || '') ? late : rows).push({ key: e._key || `x${j}`, type: 'extra', name: e.name || 'Zutat', g: e.g, hint: LATE.test(e.name || '') ? 'zum Schluss unterarbeiten' : '' }); });
   return [...rows, ...late];
 }
 // Ziehfett: dazu die ungefähre Größe der Butterplatte (1 cm dick, Butter ≈ 0,91 g/cm³)
@@ -656,6 +659,7 @@ function stepRow(s, when, r, extra = '', tail = '') {
     s.meas && measLabel(s.meas) && `Gemessen: ${measLabel(s.meas)}`,
     s._comp && `<span class="comp">Temperatur-Ausgleich: ${fmtDur(s._comp.from)} → ${fmtDur(s.durationMin)} bei ${fmtNum(s._comp.actual)} °C</span>`,
     s._adj && `🪄 Nachtruhe: ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`,
+    s._dur !== undefined && `🧪 Gärzeit geändert (Rezept: ${fmtDur(s._dur)})`,
   ].filter(Boolean);
   const more = details.length || s.notes;
   // Nebenher-Schritte: eingerückt unter dem Hauptschritt, mit Uhrzeit von–bis (sofern bekannt)
@@ -1073,9 +1077,18 @@ function wVorteig(d) {
     const starch = ['tangzhong', 'yudane', 'quell'].includes(pf.type);
     const showYeast = (!sour && !starch) || num(pf.yeastPct) > 0;
     const showStarter = sour || pf.type === 'custom';
-    const liq = pf.liquid === 'milk' ? 'Milch' : pf.liquid === 'mix' ? 'Wasser + Milch' : 'Wasser';
-    const seeds = pf.type === 'quell' && pf.seeds;
+    const ln = String(pf.liquidName || '').trim() || 'Milch';
+    const liq = pf.liquid === 'milk' ? ln : pf.liquid === 'mix' ? `Wasser + ${ln}` : 'Wasser';
+    const seeds = pf.type === 'quell' && pf.seeds, bread = seeds && C.isOldBread(pf);
     const chained = !!pf.starterFrom;
+    const mixed = (pf.flours || []).length > 1;
+    const fOpts = (sel) => [...new Set([...flourNames, sel].filter(Boolean))].map((n) => `<option ${sel === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
+    // Mehlsorte(n) im Vorteig – eine Sorte als Auswahl, auf Wunsch als Mischung
+    const flourUi = seeds || (flourNames.length < 2 && !mixed) ? ''
+      : mixed ? `<div class="pf-mix"><span class="fld-l">Mehlmischung im Vorteig</span>
+          ${pf.flours.map((f, k) => `<div class="row gap"><select class="in grow" data-bind="d.preferments.${i}.flours.${k}.name" aria-label="Mehlsorte">${fOpts(f.name)}</select><span class="unit-in w90"><input class="in" inputmode="decimal" data-bind="d.preferments.${i}.flours.${k}.pct" data-num value="${fmtIn(f.pct)}" aria-label="Anteil"><span class="u">%</span></span><button class="icon-btn" data-action="pfMixDel" data-i="${i}" data-k="${k}" aria-label="Mehlsorte entfernen">${icon('x')}</button></div>`).join('')}
+          <div class="row gap"><button class="btn sm ghost" data-action="pfMixAdd" data-i="${i}">${icon('plus')} Mehlsorte</button><small class="muted" data-live="pfmix-${i}"></small></div></div>`
+      : `<div class="pf-mix"><span class="fld-l">Mehlsorte</span><div class="row gap"><select class="in grow" data-bind="d.preferments.${i}.flourName" aria-label="Mehlsorte">${fOpts(pf.flourName)}</select><button class="btn sm ghost" data-action="pfMixAdd" data-i="${i}">${icon('plus')} mischen</button></div></div>`;
     // Zutaten, die schon in diesen Vorteig kommen (aus der Zutaten-Liste des Rezepts)
     const exNames = (d.extras || []).map((e) => e.name).filter((n) => n && !(pf.extras || []).some((x) => C.sameName(x.name, n)));
     return `<section class="card pf-card">
@@ -1085,26 +1098,29 @@ function wVorteig(d) {
       </details>
       <details class="info"><summary>ⓘ Typische Werte</summary><p>${t.info}</p></details>
       ${i > 0 && ['levain', 'madre', 'custom'].includes(pf.type) ? fld('Anstellgut', `<select class="in" data-change="pfFrom" data-i="${i}">${[`<option value="">Eigenes Anstellgut (Menge unten)</option>`, ...pfs.slice(0, i).filter((p) => !pfs.some((q, j) => j !== i && q.starterFrom === p.id)).map((p) => `<option value="${p.id}" ${pf.starterFrom === p.id ? 'selected' : ''}>Ganze Stufe „${esc(p.name)}“</option>`)].join('')}</select>`, 'Mehrstufiger Sauerteig: die vorige Stufe komplett als Anstellgut') : ''}
-      ${C.PF_LIQUID.has(pf.type) || pf.liquid !== 'water' && pf.liquid ? `<div class="seg small">${[['water', '💧 Wasser'], ['milk', '🥛 Milch'], ['mix', '💧+🥛 Gemischt']].map(([k, l]) => `<button class="${(pf.liquid || 'water') === k ? 'on' : ''}" data-action="pfLiquid" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
-        ${pf.liquid === 'mix' ? fldU('Davon Milch', numIn(`preferments.${i}.milkShare`, pf.milkShare ?? 50), '%', 'Anteil an der frisch zugegebenen Flüssigkeit') : ''}` : ''}
-      ${pf.type === 'quell' ? `<label class="check"><input type="checkbox" data-action="pfSeeds" data-i="${i}" ${pf.seeds ? 'checked' : ''}> Aus Saaten <small class="muted">(zählen nicht zum Mehl, kommen zusätzlich in den Teig)</small></label>` : ''}
+      ${pf.type === 'quell' ? `<div class="seg small">${[['flour', '🌾 Schrot/Mehl'], ['seeds', '🌻 Saaten'], ['bread', '🍞 Altbrot']].map(([k, l]) => `<button class="${(bread ? 'bread' : seeds ? 'seeds' : 'flour') === k ? 'on' : ''}" data-action="pfQuell" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
+        ${seeds ? '<p class="muted small">Zählt nicht zum Mehl – kommt mit dem Quellwasser zusätzlich in den Teig.</p>' : ''}` : ''}
+      ${!seeds && (C.PF_LIQUID.has(pf.type) || pf.liquid !== 'water' && pf.liquid) ? `<div class="seg small">${[['water', '💧 Wasser'], ['milk', `🥛 ${pf.liquid === 'milk' && ln !== 'Milch' ? esc(ln) : 'Milch & Co.'}`], ['mix', '💧+🥛 Gemischt']].map(([k, l]) => `<button class="${(pf.liquid || 'water') === k ? 'on' : ''}" data-action="pfLiquid" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
+        ${pf.liquid === 'milk' || pf.liquid === 'mix' ? `<div class="grid2">${fld('Flüssigkeit', `<input class="in" list="pf-liquids" data-change="pfLiqName" data-i="${i}" value="${esc(ln)}" aria-label="Flüssigkeit im Vorteig">`, 'aus den Zutaten des Rezepts')}
+          ${pf.liquid === 'mix' ? fldU(`Davon ${esc(ln)}`, numIn(`preferments.${i}.milkShare`, pf.milkShare ?? 50), '%', 'Rest ist Wasser') : ''}</div>` : ''}` : ''}
       <div class="grid2">
-        ${amt(`pf.${i}.flour`, seeds ? (gramMode() ? 'Saaten' : 'Saaten-Anteil') : gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', seeds ? 'vom Mehl' : 'vom Gesamtmehl')}
-        ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? `${liq} (frisch)` : liq) : pf.liquid === 'milk' ? 'Milch-Anteil' : pf.liquid === 'mix' ? 'Flüssigkeit' : 'Hydration')}
+        ${amt(`pf.${i}.flour`, seeds ? (gramMode() ? (bread ? 'Altbrot' : 'Saaten') : bread ? 'Altbrot-Anteil' : 'Saaten-Anteil') : gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', seeds ? 'vom Mehl' : 'vom Gesamtmehl')}
+        ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? `${liq} (frisch)` : liq) : pf.liquid === 'milk' ? `${esc(ln)}-Anteil` : pf.liquid === 'mix' ? 'Flüssigkeit' : seeds ? 'Wasser' : 'Hydration', seeds ? (bread ? 'meist 200–300 %' : 'meist 100 %') : '')}
         ${showYeast ? amt(`pf.${i}.yeast`, `${yeastName(d.yeastType)}`, 'vom Vorteigmehl') : ''}
         ${C.PF_SALT.has(pf.type) || num(pf.saltPct) > 0 ? amt(`pf.${i}.salt`, 'Salz', 'vom Vorteigmehl') : ''}
         ${showStarter && !chained ? amt(`pf.${i}.starter`, pf.type === 'madre' ? 'Madre (Anstellgut)' : 'Anstellgut', 'vom frischen Mehl') : ''}
         ${showStarter && !chained ? fldU(pf.type === 'madre' ? 'Hydration Madre' : 'Hydration Anstellgut', numIn(`preferments.${i}.starterHydration`, pf.starterHydration ?? 100), '%') : ''}
         ${(pf.extras || []).map((e, k) => amt(`pf.${i}.x.${k}`, `${esc(e.name)} <button class="link-x" data-action="pfExDel" data-i="${i}" data-k="${k}" aria-label="${esc(e.name)} aus dem Vorteig entfernen">✕</button>`, 'vom Gesamtmehl')).join('')}
-        ${seeds ? fld('Saaten', txtIn(`preferments.${i}.flourName`, pf.flourName, 'z. B. Leinsamen, Sonnenblumenkerne'))
-          : flourNames.length > 1 ? fld('Mehlsorte', `<select class="in" data-bind="d.preferments.${i}.flourName">${flourNames.map((n) => `<option ${pf.flourName === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`) : ''}
+        ${seeds ? fld(bread ? 'Brot' : 'Saaten', txtIn(`preferments.${i}.flourName`, pf.flourName, bread ? 'z. B. Altbrot (geröstet)' : 'z. B. Leinsamen, Sonnenblumenkerne')) : ''}
       </div>
+      ${flourUi}
       ${exNames.length ? `<details class="addmore"><summary><span class="btn sm ghost">${icon('plus')} Zutat in diesen Vorteig</span></summary>
         <div class="chips">${exNames.map((n) => `<button class="chip" data-action="pfExAdd" data-i="${i}" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
         <p class="muted small">Zum Beispiel Zucker, Butter oder Eigelb im ersten Panettone-Teig. Die Menge wird vom Hauptteig abgezogen – unter „Salz, Hefe &amp; Co.“ steht weiterhin die Gesamtmenge.</p></details>` : ''}
       <div class="pf-out" data-live="pf-${i}"></div>
     </section>`;
   }).join('')}
+  <datalist id="pf-liquids">${C.PF_LIQUIDS.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
   <details class="addmore" ${pfs.length ? '' : 'open'}>
     <summary><span class="btn sm">${icon('plus')} Vorteig hinzufügen</span></summary>
     <div class="chips">${Object.entries(PF_TYPES).map(([k, v]) => `<button class="chip" data-action="addPf" data-v="${k}">${v.icon} ${v.label}</button>`).join('')}</div>
@@ -1332,8 +1348,12 @@ function liveDraft() {
     warnings: c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '',
   };
   c.pfs.forEach((x, i) => {
-    const liq = !x.milk ? `${fmtG(x.freshWater)} Wasser` : x.milkG < x.freshWater - 0.05 ? `${fmtG(x.freshWater - x.milkG)} Wasser + ${fmtG(x.milkG)} Milch` : `${fmtG(x.freshWater)} Milch`;
-    L[`pf-${i}`] = `${x.starter > 0 ? `${fmtG(x.starter)} ${x.chained ? 'vorige Stufe' : x.pf.type === 'madre' ? 'Madre' : 'Anstellgut'} + ` : ''}${fmtG(x.freshFlour)} ${x.seeds ? 'Saaten' : 'Mehl'} + ${liq}${x.yeast > 0 ? ` + ${fmtG(x.yeast)} Hefe` : ''}${x.salt > 0 ? ` + ${fmtG(x.salt)} Salz` : ''}${(x.extras || []).map((e) => ` + ${fmtG(e.g)} ${esc(e.name)}`).join('')} = <b>${fmtG(x.total)}</b>`;
+    const ln = esc(x.liqName || 'Milch');
+    const liq = !x.milk ? `${fmtG(x.freshWater)} Wasser` : x.milkG < x.freshWater - 0.05 ? `${fmtG(x.freshWater - x.milkG)} Wasser + ${fmtG(x.milkG)} ${ln}` : `${fmtG(x.freshWater)} ${ln}`;
+    const fl = x.seeds ? `${fmtG(x.freshFlour)} ${esc(x.flourName || 'Saaten')}` : (x.flourParts || []).length > 1 ? x.flourParts.map((q) => `${fmtG(q.g)} ${esc(q.name)}`).join(' + ') : `${fmtG(x.freshFlour)} Mehl`;
+    const mx = d.preferments[i]?.flours || [];
+    if (mx.length > 1) { const sm = mx.reduce((a, f) => a + num(f.pct), 0); L[`pfmix-${i}`] = `Summe ${fmtNum(sm)} %${Math.abs(sm - 100) > 0.5 ? ' ⚠️ wird anteilig gerechnet' : ' ✓'}`; }
+    L[`pf-${i}`] = `${x.starter > 0 ? `${fmtG(x.starter)} ${x.chained ? 'vorige Stufe' : x.pf.type === 'madre' ? 'Madre' : 'Anstellgut'} + ` : ''}${fl} + ${liq}${x.yeast > 0 ? ` + ${fmtG(x.yeast)} Hefe` : ''}${x.salt > 0 ? ` + ${fmtG(x.salt)} Salz` : ''}${(x.extras || []).map((e) => ` + ${fmtG(e.g)} ${esc(e.name)}`).join('')} = <b>${fmtG(x.total)}</b>`;
   });
   c.main.extras.forEach((e, i) => { L[`ex-${i}`] = fmtG(e.g); });
   (d.steps || []).forEach((s, i) => { L[`dur-${i}`] = num(s.durationMin) > 0 ? fmtDur(s.durationMin) : '⚠️ Dauer fehlt'; if (i > 0) L[`when-${i}`] = whenText(d, i); });
@@ -1448,6 +1468,7 @@ function vPlan(id) {
         ${feat('tempComp') ? fldU('Raumtemperatur', `<input class="in" inputmode="decimal" data-change="planOv" data-k="room" value="${P.ov.room !== undefined && P.ov.room !== '' ? fmtIn(P.ov.room, 1) : ''}" placeholder="${fmtIn(S.settings.refRoom, 1)}">`, '°C', 'Gare-Zeiten werden angepasst') : ''}
       </div>
     </details>`}
+    ${yeastFitCard(r)}
     <h3 class="sec">Zeitplan</h3>
     <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '')).join('')}
       <li class="tl-i end"><div class="tl-dot">🎉</div><div class="tl-c"><div class="tl-h"><b>Fertig</b><span class="tl-when">${fmtRel(info.endAt)}</span></div></div></li>
@@ -1476,8 +1497,13 @@ function initPlan(r) {
 
 // Schritte inkl. Anpassungen aus dem Nachtruhe-Optimierer (ohne Temperatur-Ausgleich)
 // … und – falls im Planer gewählt – „Anstellgut auffrischen“ aus „Meine Kulturen“ davor
+// Gärzeiten, die im Planer unter „🧪 Gärzeit & Hefe“ geändert wurden (nur dieser Backtag)
+function planDurSteps(r) {
+  const dur = S.plan?.id === r.id ? S.plan.dur || {} : {};
+  return (r.steps || []).map((s) => (dur[s.id] !== undefined ? { ...s, durationMin: dur[s.id], _dur: num(s.durationMin) } : s));
+}
 function planStepsBase(r, adj = S.plan?.adj || {}) {
-  const steps = (r.steps || []).map((s) => (adj[s.id] ? { ...s, durationMin: num(s.durationMin) + adj[s.id], _adj: adj[s.id] } : s));
+  const steps = planDurSteps(r).map((s) => (adj[s.id] ? { ...s, durationMin: num(s.durationMin) + adj[s.id], _adj: adj[s.id] } : s));
   const c = S.plan?.cult && S.plan.id === r.id && cultById(S.plan.cult);
   if (!c) return steps;
   const [sa, fl, wa] = c.ratio || [1, 1, 1];
@@ -1522,9 +1548,46 @@ function optimizeNight(r) {
 }
 
 // Rezept für diesen Backtag – auf Wunsch mit den Mengen vom letzten Mal („🎨 Anpassen“), das Rezept selbst bleibt gleich
-function planRecipe(r) {
+function planBaseRecipe(r) {
   const l = S.plan?.usePct && S.logs.find((x) => x.id === S.plan.usePct);
   return l?.protocol?.pct ? C.applyPct(structuredClone(r), l.protocol.pct) : r;
+}
+function planRecipe(r) {
+  const x = planBaseRecipe(r);
+  return isCake(x) ? x : C.applyYeastFit(x, planYeastFit(r));
+}
+// Karte im Planer: Gärzeiten ändern, Hefe passt sich an (eingeklappt)
+function yeastFitCard(r) {
+  if (isCake(r) || !feat('yeastFit') || !usesYeastR(r)) return '';
+  const P = S.plan, groups = C.fermGroups(r, r.steps || []);
+  if (!groups.some(Boolean)) return '';
+  const durSteps = planDurSteps(r), fit = planYeastFit(r, true), on = P.yeastFit === true;
+  const rb = planBaseRecipe(r), ov = planOv(r), c0 = calc(rb, ov), c1 = fit ? calc(C.applyYeastFit(rb, fit), ov) : c0;
+  const lines = [];
+  if (c0.main.yeast > 0) lines.push(['Hauptteig', c0.main.yeast, c1.main.yeast]);
+  c0.pfs.forEach((x, k) => { if (x.yeast > 0) lines.push([x.pf.name || 'Vorteig', x.yeast, c1.pfs[k].yeast]); });
+  const sum = lines.filter(([, a, b]) => Math.abs(a - b) > 0.05).map(([n, a, b]) => `${esc(n)} ${fmtG(a)} → <b>${fmtG(b)}</b>`).join(' · ');
+  const changed = Object.keys(P.dur || {}).length > 0;
+  const rows = (r.steps || []).map((s, i) => (groups[i] ? `<div class="adj-row ${durSteps[i]._dur !== undefined ? 'chg' : ''}"><span>${kindOf(s.kind).icon} ${esc(s.name)} <small class="muted">${esc(locOf(s.location).short)}</small></span>
+    <span class="unit-in w90"><input class="in" inputmode="decimal" data-change="planDur" data-sid="${s.id}" value="${fmtIn(num(durSteps[i].durationMin) / 60, 2)}" aria-label="Dauer ${esc(s.name)} in Stunden"><span class="u">h</span></span></div>` : '')).join('');
+  return `<details class="card fold yfit" ${P.yfOpen ? 'open' : ''} data-action-toggle="yf">
+    <summary>🧪 Gärzeit &amp; Hefe <small class="muted">${on && sum ? 'Hefe angepasst' : changed ? 'Zeiten geändert' : 'Gare länger oder kürzer?'}</small></summary>
+    <p class="muted small" style="margin-top:0">Gärzeiten nur für diesen Backtag ändern – die Hefe passt sich an. Faustregel: doppelte Zeit ≈ halbe Hefe, Kühlschrank zählt etwa ⅐.</p>
+    ${rows}
+    ${sum ? `<label class="check"><input type="checkbox" data-action="planYeastFit" ${on ? 'checked' : ''}> Hefe anpassen</label><div class="adj-info">${on ? '' : 'Vorschlag: '}${sum}</div>` : ''}
+    ${changed ? '<button class="btn sm ghost" data-action="planDurReset">↶ Rezeptzeiten</button>' : ''}
+  </details>`;
+}
+// 🧪 Gärzeit & Hefe: Faktor je Stufe, wenn Gärzeiten geändert wurden und „Hefe anpassen“ an ist
+const usesYeastR = (r) => !isCake(r) && (num(r.yeastPct) > 0 || (r.preferments || []).some((p) => num(p.yeastPct) > 0));
+function planYeastFit(r, force = false) {
+  const P = S.plan;
+  if (!P || P.id !== r.id || !feat('yeastFit') || (!force && P.yeastFit !== true) || !usesYeastR(r)) return null;
+  const adj = P.adj || {};
+  const steps = planDurSteps(r).map((s) => (adj[s.id] ? { ...s, durationMin: num(s.durationMin) + adj[s.id] } : s));
+  const fit = C.yeastFit(r, r.steps || [], steps, S.settings.refRoom);
+  const same = Math.abs(fit.main - 1) < 0.01 && Object.values(fit.pfs).every((f) => Math.abs(f - 1) < 0.01);
+  return same ? null : fit;
 }
 function planOv(r) {
   const o = S.plan.ov;
@@ -1768,24 +1831,44 @@ function adjCalc(c, adj) {
   const addF = (name, d) => { if (d) flourD.set(name, (flourD.get(name) || 0) + d); };
   x.pfs.forEach((p) => {
     if (!adj[p.id]) return;
+    const a = adj[p.id];
     const sh = num(p.pf.starterHydration ?? 100) / 100, sF = (v) => v / (1 + sh);
-    const nf = val(p.id, 'flour', p.freshFlour), nw = val(p.id, 'water', p.freshWater), ns = val(p.id, 'starter', p.starter), ny = val(p.id, 'yeast', p.yeast);
-    const df = nf - p.freshFlour + sF(ns) - sF(p.starter), dw = nw - p.freshWater + (ns - sF(ns)) - (p.starter - sF(p.starter)), dy = ny - p.yeast;
+    // Mehl je Sorte (eine Sorte = „flour“, Mischung = fl0, fl1 …) + beim Backen dazugemischte Sorten (a0 …)
+    const base = !p.seeds && (p.flourParts || []).length ? p.flourParts : [{ name: p.flourName, g: p.freshFlour }];
+    const multi = base.length > 1, parts = [], fD = [];
+    base.forEach((q, k) => { const n = val(p.id, multi ? `fl${k}` : 'flour', q.g); parts.push({ ...q, g: n }); fD.push([q.name, n - q.g]); });
+    (a._add || []).forEach((ad, n) => { const g = val(p.id, `a${n}`, num(ad.g)); parts.push({ name: ad.name || 'Mehl', g, _key: `a${n}` }); fD.push([ad.name || 'Mehl', g]); });
+    const nf = parts.reduce((s2, q) => s2 + q.g, 0);
+    const nw = val(p.id, 'water', p.freshWater), ns = val(p.id, 'starter', p.starter), ny = val(p.id, 'yeast', p.yeast);
+    const dS = sF(ns) - sF(p.starter);
+    const df = nf - p.freshFlour + dS, dw = nw - p.freshWater + (ns - sF(ns)) - (p.starter - sF(p.starter)), dy = ny - p.yeast;
     const nsl = val(p.id, 'salt', num(p.salt)), dsl = nsl - num(p.salt);
-    // Frisch zugegebene Flüssigkeit aufteilen: Milch-Anteil → Milch des Rezepts, Rest + Anstellgut-Wasser → Wasser
+    // Zutaten im Vorteig (z. B. Zucker, Butter) – die Gesamtmenge im Rezept ändert sich mit
+    let dx = 0;
+    (p.extras || []).forEach((e, k) => {
+      const n = val(p.id, `x${k}`, e.g), d = n - e.g;
+      if (!d) return;
+      e.g = n; dx += d; t.extras += d; dLiq += d * C.liquidShare(e.name);
+      const mi = m.extras.findIndex((me) => C.sameName(me.name, e.name));
+      if (mi >= 0) m.extras[mi].total = (m.extras[mi].total ?? m.extras[mi].g) + d;
+    });
+    // Frisch zugegebene Flüssigkeit aufteilen: Milch-/Bier-…-Anteil → gleichnamige Zutat des Rezepts, Rest + Anstellgut-Wasser → Wasser
     const share = p.pf.liquid === 'milk' ? 1 : p.pf.liquid === 'mix' ? Math.min(1, Math.max(0, num(p.pf.milkShare) / 100)) : 0;
     const dFresh = nw - p.freshWater, milkD = dFresh * share, waterD = dw - milkD;
     Object.assign(p, { freshFlour: nf, freshWater: nw, starter: ns, yeast: ny, salt: nsl, flour: p.flour + df, water: p.water + dw,
       milkG: num(p.milkG) + milkD, waterG: num(p.waterG) + waterD });
-    p.total += df + dw + dy + dsl;
-    dD += df + dw + dy + dsl; t.yeast += dy; t.salt += dsl;
-    // Saaten zählen nicht zum Mehl/Wasser; Milch zählt zur Milch-Zutat (Gesamtmenge) und zur wirksamen Flüssigkeit
+    if (!p.seeds) { p.flourParts = parts; p.flourName = parts.filter((q) => q.g > 0.05).map((q) => q.name).join(' + ') || p.flourName; }
+    p.total += df + dw + dy + dsl + dx;
+    dD += df + dw + dy + dsl + dx; t.yeast += dy; t.salt += dsl;
+    // Saaten zählen nicht zum Mehl/Wasser; Milch & Co. zählt zur Zutat (Gesamtmenge) und zur wirksamen Flüssigkeit
     if (!p.seeds) {
-      dF += df; addF(p.flourName, df); dW += waterD;
+      dF += df; dW += waterD;
+      fD.forEach(([name, d]) => addF(name, d));
+      if (dS) addF(base[0].name, dS);
       if (milkD) {
-        const mi = C.milkIndex(m.extras);
+        const ln = p.liqName || 'Milch', mi = C.liquidIndex(m.extras, ln);
         if (mi >= 0) m.extras[mi].total = (m.extras[mi].total ?? m.extras[mi].g) + milkD;
-        t.extras += milkD; dLiq += milkD * C.liquidShare('Milch');
+        t.extras += milkD; dLiq += milkD * C.liquidShare(ln);
       }
     }
   });
@@ -1801,6 +1884,12 @@ function adjCalc(c, adj) {
     if (dw || ni !== num(m.ice)) { m.water = Math.max(0, m.water) + dw; m.ice = ni; dW += dw; dD += dw; }
     ['salt', 'yeast', 'oil'].forEach((k) => { const n = val('main', k, m[k]), d = n - m[k]; if (d) { m[k] = n; dD += d; t[k] += d; } });
     m.extras.forEach((e, j) => { const n = val('main', `x${j}`, e.g), d = n - e.g; if (d) { e.g = n; e.total = (e.total ?? e.g - d) + d; dD += d; t.extras += d; dLiq += d * C.liquidShare(e.name); } });
+    // Beim Backen spontan dazu (z. B. 20 g Honig, Saaten) – nur dieser Backtag
+    (adj.main._addX || []).forEach((a, n) => {
+      const g = val('main', `ax${n}`, num(a.g));
+      m.extras.push({ name: a.name || 'Zutat', g, total: g, _key: `ax${n}` });
+      dD += g; t.extras += g; dLiq += g * C.liquidShare(a.name);
+    });
   }
   if (adj.lam && x.lam) { const n = val('lam', 'lam', x.lam.g), d = n - x.lam.g; if (d) { x.lam.g = n; t.lam = n; dD += d; } }
   // Summen neu
@@ -1871,13 +1960,32 @@ function adjBox(s, stg) {
     align = st === 'main' && (Math.abs(sP - sP0) > 0.02 || (c.main.yeast > 0 && Math.abs(yP - yP0) > 0.005));
   }
   const hasWater = realWater;
+  // Mehl dazumischen / tauschen (Hauptteig und Vorteige mit Mehl) und Zutat dazu (Hauptteig) – erst auf Knopfdruck aufklappen
+  const flourRows = rows.filter((r) => r.type === 'flour');
+  const canFlour = !cake && (st === 'main' || flourRows.length > 0), canItem = !cake && st === 'main';
+  const addMode = S.adjAdd?.key === key ? S.adjAdd.mode : '';
+  const a = (attrs) => `data-id="${s.id}" data-st="${esc(st)}" ${attrs}`;
+  const addForm = addMode === 'flour' ? `<div class="row gap line adj-add"><input class="in grow adj-n" list="adj-flours" placeholder="Mehlsorte" aria-label="Mehlsorte">
+      ${flourRows.length ? `<select class="in w110 adj-sw" aria-label="dazu oder statt">${['<option value="">dazu</option>', ...flourRows.map((r) => `<option value="${esc(r.key)}">statt ${esc(r.name)}</option>`)].join('')}</select>` : ''}
+      <span class="unit-in w90"><input class="in adj-g" inputmode="decimal" placeholder="${flourRows.length ? 'gleich' : '0'}" aria-label="Menge"><span class="u">g</span></span>
+      <button class="icon-btn tonal" data-action="adjAddFlour" ${a('')} aria-label="Mehl übernehmen">${icon('check')}</button></div>
+      <datalist id="adj-flours">${[...new Set([...flourRows.map((r) => r.name), ...X.FLOUR_NAMES])].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>`
+    : addMode === 'item' ? `<div class="row gap line adj-add"><input class="in grow adj-n" list="adj-items" placeholder="Zutat, z. B. Honig" aria-label="Zutat">
+      <span class="unit-in w90"><input class="in adj-g" inputmode="decimal" placeholder="0" aria-label="Menge"><span class="u">g</span></span>
+      <button class="icon-btn tonal" data-action="adjAddX" ${a('')} aria-label="Zutat übernehmen">${icon('check')}</button></div>
+      <datalist id="adj-items">${['Honig', 'Zucker', 'Diastatisches Malz', 'Olivenöl', 'Butter', 'Saaten', 'Sonnenblumenkerne', 'Rosinen', 'Walnüsse', 'Milchpulver'].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>` : '';
+  const chips = [
+    hasWater && `<button class="chip" data-action="adjQuick" ${a('data-k="water" data-d="10"')}>+10 g Wasser</button>`,
+    hasWater && flourRows.length && `<button class="chip" data-action="adjQuick" ${a('data-k="flour" data-d="10"')}>+10 g Mehl</button>`,
+    canFlour && `<button class="chip ${addMode === 'flour' ? 'on' : ''}" data-action="adjAddOpen" ${a('data-m="flour"')}>⇄ Mehlsorte</button>`,
+    canItem && `<button class="chip ${addMode === 'item' ? 'on' : ''}" data-action="adjAddOpen" ${a('data-m="item"')}>＋ Zutat</button>`,
+  ].filter(Boolean);
   return `<details class="adj" data-adj="${esc(key)}" ${S.adjOpen === key ? 'open' : ''}>
     <summary>🎨 Anpassen${changed ? ` <small class="muted">· ${cake ? 'angepasst' : `jetzt ${fmtPct(c.totals.hydration)}`}</small>` : ''}</summary>
     ${rows.map((r) => `<div class="adj-row ${r.chg ? 'chg' : ''}"><span>${esc(r.name)}</span>${field(r)}</div>`).join('')}
-    ${hasWater ? `<div class="adj-row"><span>Ziel-Hydration <small class="muted">gesamt</small></span><span class="unit-in w90"><input class="in" inputmode="decimal" data-change="adjHyd" data-id="${s.id}" data-st="${esc(st)}" value="${fmtIn(c.totals.hydration, 1)}" aria-label="Ziel-Hydration"><span class="u">%</span></span></div>
-      <div class="chips"><button class="chip" data-action="adjQuick" data-id="${s.id}" data-st="${esc(st)}" data-k="water" data-d="10">+10 g Wasser</button><button class="chip" data-action="adjQuick" data-id="${s.id}" data-st="${esc(st)}" data-k="flour" data-d="10">+10 g Mehl</button></div>` : ''}
-    ${st === 'main' && !cake ? `<div class="row gap line"><input class="in grow" id="adj-fn" list="adj-flours" placeholder="Mehl dazumischen …"><span class="unit-in w90"><input class="in" id="adj-fg" inputmode="decimal" placeholder="0"><span class="u">g</span></span><button class="icon-btn tonal" data-action="adjAddFlour" data-id="${s.id}" aria-label="Mehl hinzufügen">${icon('plus')}</button></div>
-      <datalist id="adj-flours">${X.FLOUR_NAMES.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}
+    ${hasWater ? `<div class="adj-row"><span>Ziel-Hydration <small class="muted">gesamt</small></span><span class="unit-in w90"><input class="in" inputmode="decimal" data-change="adjHyd" data-id="${s.id}" data-st="${esc(st)}" value="${fmtIn(c.totals.hydration, 1)}" aria-label="Ziel-Hydration"><span class="u">%</span></span></div>` : ''}
+    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+    ${addForm}
     ${cake ? `<div class="row gap line"><input class="in grow" id="adj-in" placeholder="Zutat dazu …"><input class="in w70" id="adj-iv" inputmode="decimal" placeholder="0"><select class="in w80" id="adj-iu">${C.UNITS.map((u) => `<option>${u}</option>`).join('')}</select><button class="icon-btn tonal" data-action="adjAddItem" data-id="${s.id}" data-st="${esc(st)}" aria-label="Zutat hinzufügen">${icon('plus')}</button></div>` : ''}
     <div class="adj-info">${info}</div>
     ${align || changed ? `<div class="row gap wrap">${align ? `<button class="btn sm" data-action="adjAlign" data-id="${s.id}">Salz/Hefe angleichen</button>` : ''}${changed ? `<button class="btn sm ghost" data-action="adjReset" data-id="${s.id}" data-st="${esc(st)}">↶ Rezeptmengen</button>` : ''}</div>` : ''}
@@ -2026,10 +2134,18 @@ function protoPct(c) {
   const F = c.F, pc = (g) => (F > 0 ? (g / F) * 100 : 0);
   return {
     water: c.totals.hydration, salt: pc(c.totals.salt), yeast: pc(c.main.yeast), oil: pc(c.totals.oil), lam: pc(c.lam?.g || 0),
-    flours: (c.totals.flours || []).map((f) => ({ name: f.name, pct: f.pct })), extras: c.main.extras.map((e) => ({ name: e.name, pct: pc(e.total ?? e.g) })),
-    pfs: c.pfs.map((p) => ({ id: p.id, flourPct: pc(p.flour), hydration: p.flour > 0 ? (p.water / p.flour) * 100 : 0,
-      starterPct: !p.chained && p.freshFlour > 0 && num(p.pf.starterPct) > 0 ? (p.starter / p.freshFlour) * 100 : 0, yeastPct: p.flour > 0 ? (p.yeast / p.flour) * 100 : 0,
-      saltPct: p.flour > 0 ? (num(p.salt) / p.flour) * 100 : 0 })),
+    flours: (c.totals.flours || []).map((f) => ({ name: f.name, pct: f.pct })),
+    extras: c.main.extras.filter((e) => !e._key || (e.total ?? e.g) > 0).map((e) => ({ name: e.name, pct: pc(e.total ?? e.g) })),
+    pfs: c.pfs.map((p) => {
+      const o = { id: p.id, flourPct: pc(p.flour), hydration: p.flour > 0 ? (p.water / p.flour) * 100 : 0,
+        starterPct: !p.chained && p.freshFlour > 0 && num(p.pf.starterPct) > 0 ? (p.starter / p.freshFlour) * 100 : 0, yeastPct: p.flour > 0 ? (p.yeast / p.flour) * 100 : 0,
+        saltPct: p.flour > 0 ? (num(p.salt) / p.flour) * 100 : 0 };
+      // Mehlsorten im Vorteig (Anteil am frischen Vorteigmehl) und Zutaten im Vorteig (% vom Gesamtmehl)
+      const fp = (p.flourParts || []).filter((q) => q.g > 0.05), fs = fp.reduce((s2, q) => s2 + q.g, 0);
+      if (!p.seeds && fp.length && fs > 0) o.flours = fp.map((q) => ({ name: q.name, pct: (q.g / fs) * 100 }));
+      if ((p.extras || []).length) o.extras = p.extras.map((e) => ({ name: e.name, pct: pc(e.g) }));
+      return o;
+    }),
   };
 }
 function buildProtocol(s) {
@@ -2462,11 +2578,13 @@ function vSettings() {
       ${toggle('confirmEarly', '⏳ Vorzeitiges Weiter bestätigen', 'Fragt nach, wenn ein Schritt noch läuft und du schon weiter tippst.')}
       ${toggle('adjust', '🎨 Anpassen beim Backen', 'Zutaten während des Backens ändern – mit Hydration live und Übernahme ins Rezept.')}
       ${toggle('nightOpt', '🪄 Nachtruhe-Optimierer', 'Schlägt angepasste Kühlschrankzeiten vor.')}
+      ${toggle('yeastFit', '🧪 Gärzeit & Hefe', 'Im Planer Gärzeiten ändern – die Hefemenge passt sich an.')}
       <div class="set-row"><span><b>🌙 Nachtruhe</b><br><small class="muted">Planer warnt in dieser Zeit</small></span>
         <span class="row gap"><select class="in" style="width:auto" data-bind="set.nightFrom" data-num aria-label="Nachtruhe von">${hours.map((h) => `<option value="${h}" ${st.nightFrom === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}</select>–<select class="in" style="width:auto" data-bind="set.nightTo" data-num aria-label="Nachtruhe bis">${hours.map((h) => `<option value="${h}" ${st.nightTo === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}</select></span></div>
       <div class="set-group">Rezepte</div>
       ${toggle('pastry', '🥐 Feingebäck & Kuchen', 'Vorlagen und Kategorien für Croissant, Plunder, Hefeteig, Kuchen und Torten. Vorhandene Rezepte bleiben immer sichtbar.')}
       ${toggle('cultures', '🫙 Meine Kulturen', 'Anstellgut, Madre, LiCoLi & Co. pflegen – Fütter-Erinnerung, Rechner und Auffrischen vor dem Backtag.')}
+      ${toggle('convert', '🔁 Hefe ⇄ Sauerteig umstellen', 'Rezept als Variante auf Sauerteig, Lievito Madre oder Hefe umstellen.')}
       <div class="set-group">Teilen</div>
       ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
     </details>
@@ -2856,6 +2974,32 @@ function tick(silent) {
 
 // ---------- Sheet ----------
 // msg (optional, HTML): kurzer Text unter dem Titel, z. B. für Rückfragen
+// Kopie eines Rezepts als eigene Variante (neue IDs; Fotos NICHT mitkopieren – sonst würde das Löschen
+// der Variante die Fotos des Originals löschen)
+function asVariant(r, suffix) {
+  const c = structuredClone(r);
+  Object.assign(c, { id: uid(), name: r.name + suffix, createdAt: Date.now(), updatedAt: Date.now(), favorite: false, photos: [], cover: null });
+  c.preferments.forEach((pf) => { const old = pf.id; pf.id = uid(); c.steps.forEach((s) => { if (s.stage === old) s.stage = pf.id; }); c.preferments.forEach((q) => { if (q.starterFrom === old) q.starterFrom = pf.id; }); });
+  c.steps.forEach((s) => { s.id = uid(); });
+  return c;
+}
+// 🔁 Hefe ⇄ Sauerteig: Ziel wählen → Vorschau der Änderungen → als neue Variante anlegen
+const CONVERT_LABEL = { levain: ['🌾 Auf Sauerteig umstellen', ' (Sauerteig)'], madre: ['🫙 Auf Lievito Madre umstellen', ' (Madre)'], yeast: ['🧈 Auf Hefe umstellen', ' (Hefe)'] };
+function convertMenu(r) {
+  const opts = C.convertOptions(r), sour = (r.preferments || []).some((p) => ['levain', 'madre'].includes(p.type));
+  sheet('Rezept umstellen', opts.map((to) => ({ label: to === 'levain' && sour ? '🌾 Hefe weglassen (nur Sauerteig)' : CONVERT_LABEL[to][0], run: () => convertPreview(r, to) })),
+    'Es entsteht eine <b>neue Variante</b> – das Original bleibt unverändert.');
+}
+function convertPreview(r, to) {
+  const { recipe, changes } = C.convertRecipe(r, to);
+  sheet(CONVERT_LABEL[to][0].replace(/^\S+\s/, ''), [{ label: 'Variante anlegen', icon: 'copy', primary: true, run: async () => {
+    const c = asVariant(recipe, CONVERT_LABEL[to][1]);
+    c.name = r.name + CONVERT_LABEL[to][1];
+    await saveRecipe(c);
+    location.hash = `#/r/${c.id}`;
+    toast('✓ Variante angelegt – Zeiten beim ersten Backen gut beobachten', 4500);
+  } }], `<ul class="conv-list">${changes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><p class="muted small">Faustregel-Vorschlag – im Editor jederzeit änderbar.</p>`);
+}
 function sheet(title, items, msg = '') {
   S.sheetItems = items;
   $('#sheet-root').innerHTML = `<div class="sheet-bg" data-action="sheetClose"></div><div class="sheet" role="dialog" aria-label="${esc(title)}">
@@ -2892,13 +3036,10 @@ const A = {
     const r = byId(el.dataset.id);
     sheet(r.name, [
       { label: 'Duplizieren (Variante anlegen)', icon: 'copy', run: async () => {
-        const c = structuredClone(r);
-        // Fotos NICHT mitkopieren – sonst würde das Löschen der Variante die Fotos des Originals löschen
-        Object.assign(c, { id: uid(), name: r.name + ' (Variante)', createdAt: Date.now(), favorite: false, photos: [], cover: null });
-        c.preferments.forEach((pf) => { const old = pf.id; pf.id = uid(); c.steps.forEach((s) => { if (s.stage === old) s.stage = pf.id; }); c.preferments.forEach((q) => { if (q.starterFrom === old) q.starterFrom = pf.id; }); });
-        c.steps.forEach((s) => { s.id = uid(); });
+        const c = asVariant(r, ' (Variante)');
         await saveRecipe(c); location.hash = `#/edit/${c.id}`;
       } },
+      ...(feat('convert') && C.convertOptions(r).length ? [{ label: '🔁 Umstellen: Hefe ⇄ Sauerteig', run: () => convertMenu(r) }] : []),
       ...(feat('qr') ? [{ label: 'QR-Code zum Teilen zeigen', icon: 'share', run: () => showQR(r) }] : []),
       { label: 'Als Datei exportieren', icon: 'download', run: async () => {
         const data = await db.buildExport({ recipeIds: [r.id], meta: EXPORT_META });
@@ -3137,11 +3278,33 @@ const A = {
     const d = S.draft, pf = d.preferments[+el.dataset.i];
     pf.liquid = el.dataset.v;
     if (pf.liquid === 'mix' && !(num(pf.milkShare) > 0)) pf.milkShare = 50;
-    // Milch im Vorteig kommt aus der Milch des Rezepts – fehlt sie, gleich als Zutat anlegen
-    if (pf.liquid !== 'water' && C.milkIndex(d.extras) < 0) {
-      const c = calc(d), x = c.pfs[+el.dataset.i];
-      d.extras.push({ name: 'Milch', pct: x && c.F > 0 ? Math.round((x.milkG / c.F) * 10000) / 100 : 10 });
-      toast('Milch als Zutat ergänzt – dort steht die gesamte Milchmenge des Rezepts.', 4000);
+    ensurePfLiquid(d, +el.dataset.i);
+    render();
+  },
+  // Mehlmischung im Vorteig (z. B. Biga 80 % Tipo 00 + 20 % Vollkorn)
+  pfMixAdd: (el) => {
+    const d = S.draft, pf = d.preferments[+el.dataset.i], names = (d.flours || []).map((f) => f.name).filter(Boolean);
+    if ((pf.flours || []).length < 2) {
+      const first = names.includes(pf.flourName) ? pf.flourName : names[0] || pf.flourName || 'Mehl';
+      pf.flours = [{ name: first, pct: 80 }, { name: names.find((n) => n !== first) || first, pct: 20 }];
+    } else pf.flours.push({ name: names.find((n) => !pf.flours.some((f) => f.name === n)) || names[0] || 'Mehl', pct: 0 });
+    render();
+  },
+  pfMixDel: (el) => {
+    const pf = S.draft.preferments[+el.dataset.i];
+    pf.flours.splice(+el.dataset.k, 1);
+    if (pf.flours.length < 2) { pf.flourName = pf.flours[0]?.name || pf.flourName; pf.flours = []; }
+    render();
+  },
+  // Quellstück: Schrot/Mehl · Saaten · Altbrot (Saaten und Altbrot zählen nicht zum Mehl)
+  pfQuell: (el) => {
+    const pf = S.draft.preferments[+el.dataset.i], v = el.dataset.v, wasBread = C.isOldBread(pf);
+    if (v === 'flour') { pf.seeds = false; if (wasBread || pf.flourName === 'Saaten') pf.flourName = S.draft.flours?.[0]?.name || ''; }
+    else if (v === 'seeds') { pf.seeds = true; if (wasBread || !pf.flourName || (S.draft.flours || []).some((f) => f.name === pf.flourName)) pf.flourName = 'Saaten'; }
+    else {
+      pf.seeds = true;
+      if (!wasBread) pf.flourName = 'Altbrot';
+      if (num(pf.hydration) === PF_TYPES.quell.hydration) pf.hydration = 200;
     }
     render();
   },
@@ -3238,6 +3401,8 @@ const A = {
     toast(best.night ? `Besser geht's nicht – noch ${best.night} Schritt(e) nachts. Probier eine andere Backzeit.` : '✓ Kein Schritt mehr in der Nachtruhe', 3500);
   },
   nightReset: () => { S.plan.adj = {}; render(); },
+  planYeastFit: (el) => { S.plan.yeastFit = el.checked; S.plan.yfOpen = true; render(); },
+  planDurReset: () => { S.plan.dur = {}; S.plan.yeastFit = undefined; render(); },
   planIcs: () => {
     const r = S.plan && byId(S.plan.id);
     if (!r) return render();
@@ -3319,11 +3484,36 @@ const A = {
       if (S.hands) speak(`Hydration jetzt ${fmtNum(sessCalc(s).totals.hydration)} Prozent.`);
     });
   },
+  adjAddOpen: (el) => {
+    const key = `${el.dataset.id}:${el.dataset.st}`;
+    S.adjAdd = S.adjAdd?.key === key && S.adjAdd.mode === el.dataset.m ? null : { key, mode: el.dataset.m };
+    S.adjOpen = key;
+    render();
+    setTimeout(() => $(`details.adj[data-adj="${CSS.escape(key)}"] .adj-n`)?.focus(), 30);
+  },
+  // Mehlsorte dazumischen – oder eine Sorte tauschen („statt …“: alte Sorte auf 0, neue mit gleicher Menge)
   adjAddFlour: (el) => {
-    const s = sessById(el.dataset.id), name = $('#adj-fn')?.value.trim(), g = num($('#adj-fg')?.value);
-    if (!s || !(g > 0)) { toast('Bitte Mehlsorte und Menge eingeben'); return; }
+    const s = sessById(el.dataset.id), st = el.dataset.st, box = el.closest('.adj');
+    if (!s || !box) return;
+    const name = box.querySelector('.adj-n')?.value.trim(), sw = box.querySelector('.adj-sw')?.value || '';
+    let g = num(box.querySelector('.adj-g')?.value);
+    const old = sw ? (stageRows(sessCalc(s), st, s.yeastType)?.rows || []).find((r) => r.key === sw) : null;
+    if (!(g > 0) && old) g = Math.round(old.g * 10) / 10;
+    if (!name || !(g > 0)) { toast('Bitte Mehlsorte und Menge eingeben'); return; }
+    s.adjust ||= {}; s.adjust[st] ||= {};
+    if (old) s.adjust[st][sw] = 0;
+    s.adjust[st]._add = [...(s.adjust[st]._add || []), { name, g }];
+    S.adjAdd = null;
+    adjSet(s, st, '_t', Date.now()).then(() => toast(old ? `${name} statt ${old.name}` : `${fmtG(g)} ${name} dazu · Hydration jetzt ${fmtPct(sessCalc(s).totals.hydration)}`));
+  },
+  // Zutat im Hauptteig spontan dazu (nur dieser Backtag; „Ins Rezept“ übernimmt sie auf Wunsch)
+  adjAddX: (el) => {
+    const s = sessById(el.dataset.id), box = el.closest('.adj');
+    const name = box?.querySelector('.adj-n')?.value.trim(), g = num(box?.querySelector('.adj-g')?.value);
+    if (!s || !name || !(g > 0)) { toast('Bitte Zutat und Menge eingeben'); return; }
     s.adjust ||= {}; s.adjust.main ||= {};
-    s.adjust.main._add = [...(s.adjust.main._add || []), { name: name || 'Mehl', g }];
+    s.adjust.main._addX = [...(s.adjust.main._addX || []), { name, g }];
+    S.adjAdd = null;
     adjSet(s, 'main', '_t', Date.now());
   },
   adjAddItem: (el) => {
@@ -3679,6 +3869,16 @@ const A = {
 };
 
 // Dampfl: die Hefe des Hauptteigs wandert in das Dampfl (sonst wäre sie doppelt)
+// Milch/Bier/Buttermilch … im Vorteig kommt aus der Zutat des Rezepts – fehlt sie, gleich als Zutat anlegen
+function ensurePfLiquid(d, i) {
+  const pf = d.preferments[i];
+  if (!pf || pf.liquid === 'water') return;
+  const name = String(pf.liquidName || '').trim() || 'Milch';
+  if (C.liquidIndex(d.extras, name) >= 0) return;
+  const c = calc(d), x = c.pfs[i];
+  d.extras.push({ name, pct: x && c.F > 0 ? Math.round((x.milkG / c.F) * 10000) / 100 : 10 });
+  toast(`${name} als Zutat ergänzt – dort steht die gesamte Menge des Rezepts.`, 4000);
+}
 function dampflYeast(d, pf) {
   if (num(d.yeastPct) > 0 && num(pf.flourPct) > 0) {
     pf.yeastPct = Math.round((num(d.yeastPct) / num(pf.flourPct)) * 10000) / 100;
@@ -3731,7 +3931,10 @@ const INPUTS = {
   flourName: (el) => {
     const d = S.draft, f = d.flours[+el.dataset.i], old = f.name;
     f.name = el.value;
-    d.preferments.forEach((pf) => { if (pf.flourName === old) pf.flourName = el.value; });
+    d.preferments.forEach((pf) => {
+      if (pf.flourName === old) pf.flourName = el.value;
+      (pf.flours || []).forEach((x) => { if (x.name === old) x.name = el.value; });
+    });
     liveDraft();
     const box = $('#flour-lib-box');
     if (box) { const open = !!box.querySelector('details[open]'); box.innerHTML = flourLib(d); if (open) box.querySelector('details')?.setAttribute('open', ''); }
@@ -3787,6 +3990,24 @@ const INPUTS = {
 const CHANGES = {
   planAt: (el) => { const t = new Date(el.value).getTime(); if (Number.isFinite(t)) { S.plan.at = t; render(); } },
   planCult: (el) => { if (S.plan) { S.plan.cult = el.value || null; render(); } },
+  // 🧪 Gärzeit eines Schritts für diesen Backtag (in Stunden) – Hefe passt sich an
+  planDur: (el) => {
+    const P = S.plan, r = P && byId(P.id), st = r?.steps.find((x) => x.id === el.dataset.sid);
+    if (!st) return;
+    const v = Math.max(1, Math.round(num(el.value) * 60));
+    P.dur ||= {};
+    if (!el.value.trim() || v === Math.round(num(st.durationMin))) delete P.dur[st.id]; else P.dur[st.id] = v;
+    if (P.yeastFit === undefined && Object.keys(P.dur).length) P.yeastFit = true;
+    P.yfOpen = true;
+    render();
+  },
+  // Flüssigkeit im Vorteig (Milch, Bier, Buttermilch …) – kommt aus der gleichnamigen Zutat des Rezepts
+  pfLiqName: (el) => {
+    const d = S.draft, i = +el.dataset.i, pf = d.preferments[i], v = el.value.trim();
+    pf.liquidName = !v || C.sameName(v, 'Milch') ? '' : v;
+    ensurePfLiquid(d, i);
+    render();
+  },
   // Mehrstufiger Sauerteig: vorige Stufe als Anstellgut (Mehl-/Wasseranteil gleich so setzen, dass die vorige Stufe hineinpasst)
   pfFrom: (el) => {
     const d = S.draft, i = +el.dataset.i, pf = d.preferments[i];
@@ -3964,6 +4185,7 @@ document.addEventListener('change', (e) => {
 });
 document.addEventListener('toggle', (e) => {
   if (e.target.dataset?.actionToggle === 'adj' && S.plan) S.plan.adjOpen = e.target.open;
+  if (e.target.dataset?.actionToggle === 'yf' && S.plan) S.plan.yfOpen = e.target.open;
   if (e.target.dataset?.actionToggle === 'cult') S.cultOpen = e.target.open;
   if (e.target.dataset?.actionToggle === 'fun') S.funOpen = e.target.open;
 }, true);
