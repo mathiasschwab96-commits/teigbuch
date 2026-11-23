@@ -353,6 +353,51 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   check('KI 3-stufiger Sauerteig: 1000 g Mehl, Kette erkannt, Teig 1770 g', near(ckd.F, 1000, 0.05) && kd.preferments[2].starterFrom === kd.preferments[1].id && near(ckd.D, 1770, 0.5));
 }
 
+// ---------- 3h) Sicherung aus App 2.3 (Schema 7) → Schema 8: Mehlmischung & Flüssigkeit im Vorteig, Hefe ⇄ Sauerteig ----------
+{
+  group('Sicherung aus App 2.3 (backup-format2-app2.3.json) + Prüfung 2.4');
+  const f = await load('backup-format2-app2.3.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 8, `v=${r.v}`);
+  check('Vorteige: eine Mehlsorte wie bisher, Flüssigkeit Milch wie bisher (eindeutig ergänzt)', r.preferments.every((p) => Array.isArray(p.flours) && p.flours.length === 0 && p.liquidName === '') && r.preferments[0].flourName === 'Tipo 00');
+  const c = C.calc(r);
+  check('Rechnung unverändert: Biga 500 g Tipo 00, Hauptteig 300 g Tipo 00 + 150 g Vollkorn, 390 g Wasser', near(c.pfs[0].flour, 500, 0.01) && near(c.main.flours[0].g, 300, 0.01) && near(c.main.flours[1].g, 150, 0.01) && near(c.main.water, 390, 0.05));
+  check('Rechnung unverändert: Milch 10 g im Hauptteig (40 g im Tangzhong), Honig 5 g (5 g in der Biga), Saaten extra', near(c.main.extras[0].g, 10, 0.01) && near(c.main.extras[1].g, 5, 0.01) && near(c.totals.seeds, 125, 0.01) && c.warnings.length === 0);
+  const { rec: l } = MG.importLog(f.logs[0]);
+  check('Tagebuch mit Protokoll bleibt lesbar; „Ins Rezept“ ohne neue Angaben ändert die Vorteig-Mehle nicht', l.v === MG.SCHEMA && C.applyPct(structuredClone(r), l.protocol.pct).preferments[0].flourName === 'Tipo 00' && C.applyPct(structuredClone(r), l.protocol.pct).preferments[0].flours.length === 0);
+  // Mehlmischung im Vorteig: Biga 80 % Tipo 00 + 20 % Vollkorn
+  const mx = MG.importRecipe({ ...roundtrip(r), preferments: [{ ...roundtrip(r.preferments[0]), flours: [{ name: 'Tipo 00', pct: 80 }, { name: 'Weizenvollkornmehl', pct: 20 }] }] }).rec;
+  const cmx = C.calc(mx);
+  check('Mehlmischung: Biga 400 g Tipo 00 + 100 g Vollkorn, Hauptteig 400 g + 100 g', near(cmx.pfs[0].flourParts[0].g, 400, 0.01) && near(cmx.pfs[0].flourParts[1].g, 100, 0.01) && near(cmx.main.flours[0].g, 400, 0.01) && near(cmx.main.flours[1].g, 100, 0.01));
+  check('Mischung: „flourName“ = erste Sorte (für ältere App-Versionen)', mx.preferments[0].flourName === 'Tipo 00' && mx.preferments[0].flours.length === 2);
+  // Andere Flüssigkeit im Vorteig: Poolish mit Bier
+  const br = MG.importRecipe({ ...roundtrip(r), extras: [{ name: 'Bier', pct: 20 }], preferments: [C.makePf('poolish', { flourPct: 20, hydration: 100, liquid: 'milk', liquidName: 'Bier', flourName: 'Tipo 00' })] }).rec;
+  const cbr = C.calc(br);
+  check('Poolish mit Bier: 200 g Bier im Poolish, Bier im Hauptteig 0 g (gesamt 200 g), Wasser 700 g im Hauptteig', br.preferments[0].liquidName === 'Bier' && near(cbr.pfs[0].milkG, 200, 0.01) && near(cbr.main.extras[0].g, 0, 0.01) && near(cbr.main.extras[0].total, 200, 0.01) && near(cbr.main.water, 700, 0.05) && cbr.warnings.length === 0);
+  check('Altbrot im Quellstück zählt nicht zum Mehl', C.isOldBread({ seeds: true, flourName: 'Altbrot (geröstet)' }) && !C.isOldBread({ seeds: false, flourName: 'Altbrot' }));
+  // „Ins Rezept“ mit neuen Angaben: Mehl im Vorteig getauscht + Zutat im Vorteig geändert
+  const ap = C.applyPct(structuredClone(r), { ...l.protocol.pct, flours: [{ name: 'Tipo 00', pct: 60 }, { name: 'Weizenvollkornmehl', pct: 20 }, { name: 'Manitoba', pct: 20 }],
+    pfs: [{ id: 'fx7pf1', flourPct: 50, hydration: 50, starterPct: 0, yeastPct: 1, saltPct: 0, flours: [{ name: 'Tipo 00', pct: 60 }, { name: 'Manitoba', pct: 40 }], extras: [{ name: 'Honig', pct: 0.8 }] }] });
+  check('„Ins Rezept“: Mehlmischung und Zutat im Vorteig werden übernommen', ap.preferments[0].flours.length === 2 && ap.preferments[0].flours[1].name === 'Manitoba' && ap.preferments[0].flourName === 'Tipo 00' && near(ap.preferments[0].extras[0].pct, 0.8, 0.001) && ap.flours.length === 3);
+  // Hefe passend zur Gärzeit: doppelte Gärzeit ≈ halbe Hefe; Kühlschrank zählt ca. 0,15
+  const yr = { preferments: [], steps: [{ id: 'a', kind: 'mix', stage: 'main', durationMin: 15, location: 'rt' }, { id: 'b', kind: 'bulk', durationMin: 120, location: 'rt' }] };
+  check('Gärzeit doppelt → Hefe halb', near(C.yeastFit(yr, yr.steps, [yr.steps[0], { ...yr.steps[1], durationMin: 240 }]).main, 0.5, 0.001));
+  const bg = C.calc(r), fit = C.yeastFit(r, r.steps, r.steps.map((s) => (s.id === 'fx7s2' ? { ...s, durationMin: 2880 } : s)));
+  check('Biga 24 h → 48 h im Kühlschrank: Biga-Hefe halb, Hauptteig unverändert', near(fit.pfs.fx7pf1, 0.5, 0.001) && fit.main === 1, JSON.stringify(fit));
+  check('Hefe-Anpassung ändert nur die Hefe', near(C.calc(C.applyYeastFit(r, fit)).pfs[0].yeast, bg.pfs[0].yeast * fit.pfs.fx7pf1, 0.001) && near(C.calc(C.applyYeastFit(r, fit)).D, bg.D - bg.pfs[0].yeast * (1 - fit.pfs.fx7pf1), 0.01));
+  // Hefe ⇄ Sauerteig umstellen (Variante – das Original bleibt unverändert)
+  const orig = JSON.stringify(r);
+  const cv = C.convertRecipe(r, 'levain');
+  check('Umstellen auf Sauerteig: Biga wird Sauerteig, keine Hefe mehr, Original unverändert', cv.recipe.preferments[0].type === 'levain' && C.calc(cv.recipe).totals.yeast === 0 && JSON.stringify(r) === orig && cv.changes.length > 0);
+  const back = C.convertRecipe(MG.importRecipe(roundtrip(cv.recipe)).rec, 'yeast');
+  check('Und zurück auf Hefe: Sauerteig wird Biga/Poolish mit Hefe, Hauptteig-Hefe gesetzt', ['biga', 'poolish'].includes(back.recipe.preferments[0].type) && C.calc(back.recipe).totals.yeast > 0 && C.calc(back.recipe).warnings.length === 0);
+  const KI = await import('../ki-import.js');
+  const kb = MG.importRecipe(KI.kiToRecipe({ name: 'Bierbrot', category: 'bread', preferments: [{ type: 'levain', flours: [{ name: 'Roggenmehl 1150', g: 80 }, { name: 'Weizenmehl 550', g: 20 }], water_g: 0, milk_g: 100, liquid_name: 'Bier', starter_g: 20 }],
+    main: { flours: [{ name: 'Weizenmehl 550', g: 400 }], water_g: 300, salt_g: 10, extras: [] } }, { schema: MG.SCHEMA }).recipe).rec;
+  const ckb = C.calc(kb);
+  check('KI: Mehlmischung und Bier im Sauerteig erkannt', kb.preferments[0].flours.length === 2 && kb.preferments[0].liquidName === 'Bier' && near(ckb.pfs[0].milkG, 100, 0.5) && near(ckb.main.extras.find((e) => e.name === 'Bier').total, 100, 0.5) && ckb.warnings.length === 0);
+}
+
 // ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
 {
   group('Rezept aus KI-Antwort (ki-import.js)');

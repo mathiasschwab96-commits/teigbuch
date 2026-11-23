@@ -1,0 +1,56 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 7,
+ "appVersion": "2.3.0",
+ "exportedAt": "2026-11-23T16:00:00.000Z",
+ "recipes": [
+  {
+   "v": 7,
+   "id": "fx7biga",
+   "name": "Pizza mit Biga und Vollkorn (Sicherung 2.3)",
+   "category": "pizza",
+   "description": "Testrezept im Format von App 2.3.0",
+   "source": "", "tags": [], "favorite": false, "photos": [], "cover": null,
+   "yield": { "mode": "flour", "count": 1, "pieceWeight": 0, "flour": 1000, "loss": 0 },
+   "flours": [{ "name": "Tipo 00", "pct": 80 }, { "name": "Weizenvollkornmehl", "pct": 20 }],
+   "water": { "pct": 70, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 }, "salt": 2.8, "yeastType": "fresh", "yeastPct": 0,
+   "extras": [{ "name": "Milch", "pct": 5 }, { "name": "Honig", "pct": 1 }],
+   "preferments": [
+    { "id": "fx7pf1", "type": "biga", "name": "Biga", "flourPct": 50, "hydration": 50, "yeastPct": 1, "starterPct": 0, "starterHydration": 100, "flourName": "Tipo 00", "liquid": "water", "saltPct": 0, "seeds": false, "milkShare": 0, "extras": [{ "name": "Honig", "pct": 0.5 }], "starterFrom": "" },
+    { "id": "fx7pf2", "type": "tangzhong", "name": "Tangzhong", "flourPct": 5, "hydration": 200, "yeastPct": 0, "starterPct": 0, "starterHydration": 100, "flourName": "Weizenvollkornmehl", "liquid": "mix", "saltPct": 0, "seeds": false, "milkShare": 40, "extras": [], "starterFrom": "" },
+    { "id": "fx7pf3", "type": "quell", "name": "Quellstück", "flourPct": 5, "hydration": 150, "yeastPct": 0, "starterPct": 0, "starterHydration": 100, "flourName": "Leinsamen", "liquid": "water", "saltPct": 0, "seeds": true, "milkShare": 0, "extras": [], "starterFrom": "" }
+   ],
+   "steps": [
+    { "id": "fx7s1", "kind": "prep", "name": "Biga ansetzen", "durationMin": 15, "location": "rt", "temp": "", "stage": "fx7pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx7s2", "kind": "rest", "name": "Biga reifen", "durationMin": 1440, "location": "fridge", "temp": "", "stage": "fx7pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx7s3", "kind": "mix", "name": "Hauptteig", "durationMin": 20, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx7s4", "kind": "bulk", "name": "Stockgare", "durationMin": 60, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx7s5", "kind": "bake", "name": "Backen", "durationMin": 20, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null }
+   ],
+   "ddt": 23, "notes": "",
+   "lamination": { "pct": 0, "name": "" }, "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 }, "parts": [],
+   "createdAt": 1795430000000, "updatedAt": 1795430100000
+  }
+ ],
+ "logs": [
+  {
+   "v": 7, "id": "fx7log", "recipeId": "fx7biga", "date": "2026-11-22", "rating": 4, "sub": {},
+   "params": { "hydration": 71, "salt": 2.8, "yeastPct": 0, "pf": "Biga 50 %", "count": 1, "pieceWeight": 0, "totalHours": 27, "flour": "Tipo 00 80 %, Weizenvollkornmehl 20 %", "pan": "" },
+   "roomTemp": "", "doughTemp": "", "fridgeTemp": "", "waterTemp": "", "iceG": "", "oven": "", "bakeTemp": "", "bakeTime": "", "notes": "", "nextTime": "",
+   "photos": [], "sessionId": null,
+   "protocol": {
+    "startAt": 1795430000000, "endAt": 1795527200000, "hydration": 71, "baseHydration": 70, "dough": 1820,
+    "steps": [{ "name": "Biga ansetzen", "kind": "prep", "loc": "rt", "plan": 15, "act": 15, "start": 1795430000000, "end": 1795430900000, "par": "", "temp": "", "stage": "Biga", "note": "", "feel": "", "photos": [], "meas": {}, "shift": null, "comp": null }],
+    "blocks": [{ "title": "Hauptteig", "rows": [{ "name": "Wasser", "txt": "460 g", "was": "450 g" }] }],
+    "changes": [{ "stage": "Hauptteig", "name": "Wasser", "from": "450 g", "to": "460 g" }],
+    "pct": { "water": 71, "salt": 2.8, "yeast": 0, "oil": 0, "lam": 0, "flours": [{ "name": "Tipo 00", "pct": 80 }, { "name": "Weizenvollkornmehl", "pct": 20 }], "extras": [{ "name": "Milch", "pct": 5 }, { "name": "Honig", "pct": 1 }],
+     "pfs": [{ "id": "fx7pf1", "flourPct": 50, "hydration": 50, "starterPct": 0, "yeastPct": 1, "saltPct": 0 }], "cake": [] }
+   },
+   "createdAt": 1795527300000, "updatedAt": 1795527300000
+  }
+ ],
+ "cultures": [],
+ "photos": []
+}
