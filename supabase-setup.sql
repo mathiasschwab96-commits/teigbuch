@@ -16,9 +16,9 @@ create table if not exists public.items (
   primary key (user_id, id)
 );
 create index if not exists items_user_server_at on public.items (user_id, server_at);
--- 1b) Erlaubte Datenarten (ab App 2.1 auch „culture“ = Meine Kulturen) – ersetzt die alte Regel
+-- 1b) Erlaubte Datenarten (ab App 2.1 auch „culture“ = Meine Kulturen, ab App 2.6 „flour“ = Meine Mehle) – ersetzt die alte Regel
 alter table public.items drop constraint if exists items_kind_check;
-alter table public.items add constraint items_kind_check check (kind in ('recipe', 'log', 'culture'));
+alter table public.items add constraint items_kind_check check (kind in ('recipe', 'log', 'culture', 'flour'));
 
 -- 2) Zugriffsrechte (neuere Supabase-Projekte vergeben diese nicht mehr automatisch)
 --    anon darf nur lesen und sieht wegen der Regeln unten trotzdem NICHTS – nötig für den Wecker.

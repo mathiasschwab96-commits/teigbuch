@@ -1,4 +1,16 @@
 // Teigbuch – App-Oberfläche
+//
+// Aufbau dieser Datei (Abschnitte sind mit „// ---------- Name ----------“ markiert, Suche nach dem Namen):
+//   Funktionen an/aus · kleine Helfer · Speichern · Geräte-Sync · Router
+//   Ansichten:  Übersicht · Fehlende Angaben · Rezept-Detail · Kuchen umrechnen · Editor (inkl. KI-Brücke,
+//               Mengen in % oder g, Kuchen) · Planer · Backvorgang · 🎨 Anpassen · Teighände-Modus ·
+//               Temperatur-Messwerte · Backprotokoll · Vergleich · Tagebuch ansehen/bearbeiten ·
+//               🫙 Meine Kulturen · 🌾 Meine Mehle · Einstellungen
+//   Technik:    Export/Import/Teilen · QR-Code · Benachrichtigungen · Sheet (Auswahlmenü)
+//   Bedienung:  Aktionen (A, data-action) · Eingaben (INPUTS data-input, CHANGES data-change, data-bind)
+//               · Navigation/Zurück · Kein Zoomen · Start
+// Andere Dateien: calc.js (Rechnen, Zeitplan, Vorlagen, Datenbereinigung) · extras.js (Mehl-Wissen, Ampel,
+//   Erfolge) · migrate.js (Datenversionen) · db.js (Speicher) · sync.js (Supabase) · ki-import.js · qr.js
 import * as db from './db.js';
 import * as C from './calc.js';
 import { qrSVG } from './qr.js';
@@ -8,7 +20,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '2.4.0';
+const VERSION = '2.6.1';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -48,7 +60,7 @@ const calcFor = (r, ov) => (isCake(r) ? C.calcCake(r, ov) : calc(r, ov));
 
 // ---------- Funktionen an/aus ----------
 const feat = (k) => S.settings.features?.[k] !== false;
-const FEATURES = ['tempComp', 'handsFree', 'confirmEarly', 'adjust', 'nightOpt', 'yeastFit', 'pastry', 'cultures', 'convert', 'qr'];
+const FEATURES = ['tempComp', 'handsFree', 'confirmEarly', 'adjust', 'nightOpt', 'yeastFit', 'pastry', 'cultures', 'myFlours', 'convert', 'flourAmp', 'qr'];
 // Schritte eines Backvorgangs inkl. Temperatur-Ausgleich
 // (±-Verschiebungen per Knopf werden NACH dem Ausgleich addiert, damit +15 min auch +15 min bleiben)
 const effSteps = (s) => (feat('tempComp') ? C.compensateSteps(s.steps, { room: s.room, refRoom: S.settings.refRoom }) : s.steps)
@@ -72,7 +84,6 @@ const yeastName = (t) => (t === 'dry' ? 'Trockenhefe' : 'Frischhefe');
 const fmtIn = (v, d = 2) => String(Math.round(num(v) * 10 ** d) / 10 ** d).replace('.', ',');
 const stars = (v) => { const n = Math.round(v); return `<span class="stars-s" aria-label="${fmtNum(v)} von 5">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`; };
 const p2 = (n) => String(n).padStart(2, '0');
-const toLocalInput = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`; };
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
 const fmtDate = (iso) => (iso ? new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso + 'T12:00')) : '');
 const slug = (s) => (s || 'rezept').toLowerCase().replace(/[äöüß]/g, (c) => ({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' }[c])).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -188,6 +199,7 @@ function render() {
   if (S.hands && !(a === 'bake' && b === S.hands)) { S.hands = null; keepAwake(false); }
   document.body.toggleAttribute('data-hands', !!S.hands);
   let out, tab = 'recipes';
+  X.setMyFlours(feat('myFlours') ? S.flours || [] : []); // Schalter „Meine Mehle“ wirkt sofort
   try {
     if (!a) out = vList();
     else if (a === 'r') out = vRecipe(b, q.get('tab') || 'ing');
@@ -197,6 +209,7 @@ function render() {
     else if (a === 'log') out = c === 'new' || parts[3] === 'edit' ? vLog(b, c, q) : vLogView(b, c, q);
     else if (a === 'cmp') out = vCmp(b, q);
     else if (a === 'culture') { tab = 'bake'; out = vCulture(b); }
+    else if (a === 'flour') { tab = 'bake'; out = vFlour(b); }
     else if (a === 'import') out = vImport(b || '');
     else if (a === 'fix') out = vFix();
     else if (a === 'ki') out = vKi();
@@ -391,6 +404,7 @@ function vRecipe(id, tab) {
       ${avg ? `<span class="fact">★ ${fmtNum(avg)} <small>(${logs.length})</small></span>` : ''}
     </div>
     ${MG.openQuestions(r).length ? `<div class="hint-card warnc"><div>📝 Hier fehlt noch eine Angabe: ${esc(MG.openQuestions(r)[0].question)}</div><a class="btn sm primary" href="#/fix">Nachtragen</a></div>` : ''}
+    ${cake ? '' : flourAmp(X.flourCheck(r), { quiet: true })}
     <a class="btn primary big block" href="#/plan/${id}">${icon('timer')} Backen planen</a>
     <div class="seg" role="tablist">${tabs.map(([k, l]) => `<a role="tab" data-replace class="${tab === k ? 'on' : ''}" href="#/r/${id}?tab=${k}">${l}</a>`).join('')}</div>
     <div id="tabbody">${body}</div>
@@ -522,7 +536,7 @@ function ingTable(title, sub, rows, cls = '') {
   const total = rows.reduce((s, x) => s + (x.g || 0), 0);
   return `<section class="ing ${cls}" ${title ? `data-tk="${esc(title.replace(/<[^>]*>/g, ''))}"` : ''}>
     ${title ? `<h3>${title}${sub ? `<small>${sub}</small>` : ''}</h3>` : ''}
-    <table>${rows.map((x) => `<tr data-action="tick" ${x.chg ? 'class="chg"' : ''}><td>${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${x.txt ?? fmtG(x.g)}</td></tr>`).join('')}
+    <table>${rows.map((x) => `<tr data-action="tick" ${x.chg ? 'class="chg"' : ''}><td>${x.type === 'flour' && myF(x.name) ? fDot(myF(x.name)) : ''}${esc(x.name)}${x.hint ? `<small>${esc(x.hint)}</small>` : ''}</td><td class="num">${x.txt ?? fmtG(x.g)}</td></tr>`).join('')}
     ${allG ? `<tr class="sum"><td>Summe</td><td class="num">${fmtG(total)}</td></tr>` : ''}</table>
   </section>`;
 }
@@ -714,28 +728,6 @@ function logCard(l, r) {
     <span class="grow"><span class="row between"><b>${fmtDate(l.date)}</b>${l.rating ? stars(l.rating) : '<small class="muted">–</small>'}</span>
       <small class="muted">${[hyd && `💧 ${fmtPct(hyd)}`, l.params?.pan && `⭕ ${esc(l.params.pan)}`, l.protocol && protoSum(l.protocol)].filter(Boolean).join(' · ')}</small>
       ${note ? `<span class="log-note">${esc(note)}</span>` : ''}</span></a>`;
-}
-function logCardFull(l, r) {
-  const subs = SUBRATINGS[r.category] || SUBRATINGS.other;
-  const subTxt = subs.filter(([k]) => l.sub?.[k]).map(([k, lbl]) => `${lbl} ${l.sub[k]}/5`).join(' · ');
-  const cond = [l.doughTemp && `Teig ${esc(l.doughTemp)} °C`, l.roomTemp && `Raum ${esc(l.roomTemp)} °C`, l.fridgeTemp && `Kühlschrank ${esc(l.fridgeTemp)} °C`, l.waterTemp && `Wasser ${esc(l.waterTemp)} °C`, l.iceG && `Eis ${esc(l.iceG)} g`, l.oven && esc(l.oven), l.bakeTemp && `${esc(l.bakeTemp)} °C`, l.bakeTime && esc(l.bakeTime)].filter(Boolean).join(' · ');
-  const hyd = num(l.params?.hydration);
-  return `<details class="card log">
-    <summary><span class="log-d">${fmtDate(l.date)}</span>${hyd ? `<span class="log-h">💧 ${fmtPct(hyd)}</span>` : ''}<span class="grow"></span>${l.rating ? stars(l.rating) : '<small class="muted">–</small>'}</summary>
-    <div class="pchips">${paramChips(l.params)}</div>
-    ${subTxt ? `<div class="muted small">${subTxt}</div>` : ''}
-    ${cond ? `<div class="muted small">🌡️ ${cond}</div>` : ''}
-    ${l.protocol ? `<div class="muted small">⏱ ${protoSum(l.protocol) || 'Ablauf gespeichert'} · <a href="#/log/${r.id}/${l.id}">Details</a></div>` : ''}
-    ${l.notes ? `<p class="pre">${esc(l.notes)}</p>` : ''}
-    ${l.nextTime ? `<p class="next">➡️ <b>Nächstes Mal:</b> ${esc(l.nextTime)}</p>` : ''}
-    ${(l.photos || []).length ? `<div class="thumbs">${l.photos.map((p) => `<button class="ph thumb" data-action="viewPhoto" data-id="${p}"><img data-photo="${p}" alt=""></button>`).join('')}</div>` : ''}
-    <div class="act-row">
-      <button class="btn sm" data-action="bakeAgain" data-id="${l.id}">${icon('play')} So nochmal backen</button>
-      ${l.protocol?.pct ? `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button><button class="btn sm ghost" data-action="logVariant" data-id="${l.id}">Als Variante</button>`
-        : isCake(r) ? '' : `<button class="btn sm ghost" data-action="applyLog" data-id="${l.id}">Ins Rezept</button>`}
-      <a class="icon-btn" href="#/log/${r.id}/${l.id}" aria-label="Bearbeiten">${icon('edit')}</a>
-    </div>
-  </details>`;
 }
 
 function hydChart(logs) {
@@ -1001,10 +993,21 @@ function wMenge(d) {
   </div>`;
 }
 
+// 🚦 Mehl-Ampel: passt das Mehl zu Hydration, Gärzeit, Roggenanteil und Anreicherung? (eingeklappt)
+// quiet = nur bei Gelb/Rot zeigen (Rezeptseite, Planer); sonst auch Grün mit den Richtwerten (Editor)
+const AMP = { green: ['🟢', 'Mehl passt'], yellow: ['🟡', 'Mehl: bitte prüfen'], red: ['🔴', 'Mehl passt nicht gut'] };
+function flourAmp(res, { quiet = false, label = '' } = {}) {
+  if (!feat('flourAmp') || !res?.level || (quiet && res.level === 'green')) return '';
+  const [ic, t] = AMP[res.level], b = res.blend;
+  const facts = [b.w && `W ≈ ${fmtNum(b.w, 0)} → Gare bis ca. ${X.maxHoursForW(b.w)} h`, b.cap && `Wasser bis ca. ${fmtNum(b.cap, 0)} %`].filter(Boolean).join(' · ');
+  return `<details class="amp amp-${res.level}"><summary>${ic} <b>${label || t}</b> <small>${res.items.length ? `${res.items.length} Hinweis${res.items.length > 1 ? 'e' : ''}` : esc(facts)}</small></summary>
+    ${res.items.map((x) => `<p>${x.level === 'red' ? '🔴' : '🟡'} ${esc(x.text)}${x.tip ? `<br><small>💡 ${esc(x.tip)}</small>` : ''}</p>`).join('')}
+    ${facts ? `<p class="muted small">${esc(facts)}. Richtwerte – maßgeblich ist die Packung (W-Wert im Mehlnamen, z. B. „Tipo 00 W 300“, wird erkannt).</p>` : ''}</details>`;
+}
 // Mehl-Bibliothek: nur Hintergrundinfos (eingeklappt) + ein Hinweis, wenn Mehl und Führung nicht zusammenpassen
 function flourLib(d) {
   const known = [...new Map((d.flours || []).map((f) => [X.flourInfo(f.name), f.name]).filter(([i]) => i)).entries()];
-  const hints = X.flourHints(d);
+  const hints = feat('flourAmp') ? [] : X.flourHints(d);
   if (!known.length && !hints.length) return '';
   return `${hints.map((h) => `<div class="hint-card warnc small"><div>🌾 ${esc(h)}</div></div>`).join('')}
     ${known.length ? `<details class="info"><summary>ⓘ Mehl-Infos <small class="muted">${known.map(([i]) => esc(i.name)).join(', ')}</small></summary>
@@ -1014,20 +1017,26 @@ function flourLib(d) {
 
 function wMehl(d) {
   const fine = d.category === 'fine';
+  const myList = feat('myFlours') ? S.flours.filter((m) => m.name) : [];
   const hydHints = fine ? [[0, 'nur Milch/Ei'], [25, 'mit Milch'], [30, 'Croissant'], [55, 'nur Wasser']] : [[60, 'fest'], [65, 'klassisch'], [68, 'Napoli'], [70, 'luftig'], [75, 'Sauerteig'], [80, 'Teglia']];
+  // Passend zu den Mehlen (eigene Angaben bzw. Richtwerte): etwas unter der verträglichen Grenze
+  const ideal = !fine && (d.flours || []).some((f) => myF(f.name)) ? X.idealHydration(d) : null;
+  if (ideal) hydHints.unshift([ideal, '🌾 dein Mehl']);
   return `
   <div class="fld"><span class="fld-l">Mehlmischung <small class="muted">(Anteile am Gesamtmehl)</small></span>
     ${(d.flours || []).map((f, i) => `<div class="row gap line">
-      <input class="in grow" data-input="flourName" data-i="${i}" value="${esc(f.name)}" placeholder="Mehlsorte" list="flour-lib">
+      <input class="in grow${mineAttr(f.name)}" data-input="flourName" data-i="${i}" value="${esc(f.name)}" placeholder="Mehlsorte" list="flour-lib">
       <span class="unit-in w90"><input class="in" inputmode="decimal" data-bind="d.flours.${i}.pct" data-num value="${fmtIn(f.pct)}"><span class="u">%</span></span>
       ${d.flours.length > 1 ? `<button class="icon-btn" data-action="delFlour" data-i="${i}" aria-label="Entfernen">${icon('x')}</button>` : ''}
     </div>`).join('')}
     <details class="addmore">
       <summary><span class="btn sm ghost">${icon('plus')} Mehl dazumischen</span><small class="muted">Summe: <b data-live="blendSum"></b></small></summary>
+      ${myList.length ? `<div class="chips">${myList.filter((m) => !(d.flours || []).some((f) => C.sameName(f.name, m.name))).map((m) => `<button class="chip mine" style="--fc:${fColor(m)}" data-action="addFlour" data-v="${esc(m.name)}">${fDot(m)} ${esc(m.name)}</button>`).join('')}</div>` : ''}
       <div class="chips">${FLOUR_PRESETS.filter((n) => !(d.flours || []).some((f) => f.name === n)).map((n) => `<button class="chip" data-action="addFlour" data-v="${n}">${n}</button>`).join('')}<button class="chip" data-action="addFlour" data-v="">Eigenes …</button></div>
-      <p class="muted small">Startet mit 20 % – wird vom ersten Mehl abgezogen, die Summe bleibt 100 %.</p>
+      <p class="muted small">Startet mit 20 % – wird vom ersten Mehl abgezogen, die Summe bleibt 100 %.${feat('myFlours') && !myList.length ? ' Tipp: Unter Backen → 🌾 Meine Mehle legst du deine eigenen Mehle mit Packungsangaben an.' : ''}</p>
     </details>
-    <datalist id="flour-lib">${X.FLOUR_NAMES.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <datalist id="flour-lib">${[...myList.map((m) => m.name), ...X.FLOUR_NAMES].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div data-live="flourAmp" data-html></div>
     <div id="flour-lib-box">${flourLib(d)}</div>
   </div>
   <div class="link-card">
@@ -1082,7 +1091,7 @@ function wVorteig(d) {
     const seeds = pf.type === 'quell' && pf.seeds, bread = seeds && C.isOldBread(pf);
     const chained = !!pf.starterFrom;
     const mixed = (pf.flours || []).length > 1;
-    const fOpts = (sel) => [...new Set([...flourNames, sel].filter(Boolean))].map((n) => `<option ${sel === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
+    const fOpts = (sel) => [...new Set([...flourNames, sel].filter(Boolean))].map((n) => `<option value="${esc(n)}" ${sel === n ? 'selected' : ''}>${myF(n) ? '🌾 ' : ''}${esc(n)}</option>`).join('');
     // Mehlsorte(n) im Vorteig – eine Sorte als Auswahl, auf Wunsch als Mischung
     const flourUi = seeds || (flourNames.length < 2 && !mixed) ? ''
       : mixed ? `<div class="pf-mix"><span class="fld-l">Mehlmischung im Vorteig</span>
@@ -1100,9 +1109,14 @@ function wVorteig(d) {
       ${i > 0 && ['levain', 'madre', 'custom'].includes(pf.type) ? fld('Anstellgut', `<select class="in" data-change="pfFrom" data-i="${i}">${[`<option value="">Eigenes Anstellgut (Menge unten)</option>`, ...pfs.slice(0, i).filter((p) => !pfs.some((q, j) => j !== i && q.starterFrom === p.id)).map((p) => `<option value="${p.id}" ${pf.starterFrom === p.id ? 'selected' : ''}>Ganze Stufe „${esc(p.name)}“</option>`)].join('')}</select>`, 'Mehrstufiger Sauerteig: die vorige Stufe komplett als Anstellgut') : ''}
       ${pf.type === 'quell' ? `<div class="seg small">${[['flour', '🌾 Schrot/Mehl'], ['seeds', '🌻 Saaten'], ['bread', '🍞 Altbrot']].map(([k, l]) => `<button class="${(bread ? 'bread' : seeds ? 'seeds' : 'flour') === k ? 'on' : ''}" data-action="pfQuell" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
         ${seeds ? '<p class="muted small">Zählt nicht zum Mehl – kommt mit dem Quellwasser zusätzlich in den Teig.</p>' : ''}` : ''}
-      ${!seeds && (C.PF_LIQUID.has(pf.type) || pf.liquid !== 'water' && pf.liquid) ? `<div class="seg small">${[['water', '💧 Wasser'], ['milk', `🥛 ${pf.liquid === 'milk' && ln !== 'Milch' ? esc(ln) : 'Milch & Co.'}`], ['mix', '💧+🥛 Gemischt']].map(([k, l]) => `<button class="${(pf.liquid || 'water') === k ? 'on' : ''}" data-action="pfLiquid" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
+      ${!seeds && (C.PF_LIQUID.has(pf.type) || pf.liquid !== 'water' && pf.liquid) ? (() => {
+        const ui = `<div class="seg small">${[['water', '💧 Wasser'], ['milk', `🥛 ${pf.liquid === 'milk' && ln !== 'Milch' ? esc(ln) : 'Milch & Co.'}`], ['mix', '💧+🥛 Gemischt']].map(([k, l]) => `<button class="${(pf.liquid || 'water') === k ? 'on' : ''}" data-action="pfLiquid" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>
         ${pf.liquid === 'milk' || pf.liquid === 'mix' ? `<div class="grid2">${fld('Flüssigkeit', `<input class="in" list="pf-liquids" data-change="pfLiqName" data-i="${i}" value="${esc(ln)}" aria-label="Flüssigkeit im Vorteig">`, 'aus den Zutaten des Rezepts')}
-          ${pf.liquid === 'mix' ? fldU(`Davon ${esc(ln)}`, numIn(`preferments.${i}.milkShare`, pf.milkShare ?? 50), '%', 'Rest ist Wasser') : ''}</div>` : ''}` : ''}
+          ${pf.liquid === 'mix' ? fldU(`Davon ${esc(ln)}`, numIn(`preferments.${i}.milkShare`, pf.milkShare ?? 50), '%', 'Rest ist Wasser') : ''}</div>` : ''}`;
+        // Biga, Sauerteig, Pâte fermentée sind fast immer mit Wasser – Auswahl nur auf Wunsch aufklappen
+        return ['biga', 'levain', 'pate'].includes(pf.type) && (pf.liquid || 'water') === 'water'
+          ? `<details class="fold pf-liq"><summary>Flüssigkeit: <b>Wasser</b> <small class="muted">ändern (z. B. Bier)</small></summary>${ui}</details>` : ui;
+      })() : ''}
       <div class="grid2">
         ${amt(`pf.${i}.flour`, seeds ? (gramMode() ? (bread ? 'Altbrot' : 'Saaten') : bread ? 'Altbrot-Anteil' : 'Saaten-Anteil') : gramMode() ? (showStarter ? 'Mehl (frisch)' : 'Mehl') : 'Mehlanteil', seeds ? 'vom Mehl' : 'vom Gesamtmehl')}
         ${amt(`pf.${i}.water`, gramMode() ? (showStarter ? `${liq} (frisch)` : liq) : pf.liquid === 'milk' ? `${esc(ln)}-Anteil` : pf.liquid === 'mix' ? 'Flüssigkeit' : seeds ? 'Wasser' : 'Hydration', seeds ? (bread ? 'meist 200–300 %' : 'meist 100 %') : '')}
@@ -1346,6 +1360,7 @@ function liveDraft() {
     yeast: `${fmtG(c.main.yeast)} im Hauptteig · gesamt ${fmtG(c.totals.yeast)}`,
     total: d.steps?.length ? fmtDur(info.total) : '–', bakeOff: d.steps?.length ? fmtDur(info.bakeOff) : '–',
     warnings: c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '',
+    flourAmp: isCake(d) ? '' : flourAmp(X.flourCheck(d)),
   };
   c.pfs.forEach((x, i) => {
     const ln = esc(x.liqName || 'Milch');
@@ -1360,7 +1375,12 @@ function liveDraft() {
   $$('[data-live]').forEach((el) => {
     const k = el.dataset.live;
     if (!(k in L)) return;
-    if (el.hasAttribute('data-html') || k.startsWith('pf-') || k.startsWith('when-')) el.innerHTML = L[k]; else el.textContent = L[k];
+    if (el.hasAttribute('data-html') || k.startsWith('pf-') || k.startsWith('when-')) {
+      // aufgeklappte Hinweise beim Live-Aktualisieren offen lassen
+      const open = !!el.querySelector('details[open]');
+      if (el.innerHTML !== L[k]) el.innerHTML = L[k];
+      if (open) el.querySelector('details')?.setAttribute('open', '');
+    } else el.textContent = L[k];
   });
   $$('input[data-link]').forEach((el) => {
     if (el === document.activeElement) return;
@@ -1435,13 +1455,13 @@ function vPlan(id) {
       <button class="${P.mode === 'bake' ? 'on' : ''}" data-action="planMode" data-v="bake">Backen um …</button>
       <button class="${P.mode === 'start' ? 'on' : ''}" data-action="planMode" data-v="start">Start um …</button>
     </div>
-    ${P.mode !== 'now' ? fld(P.mode === 'bake' ? 'Wann willst du backen?' : 'Wann startest du?', `<input class="in big" type="datetime-local" data-change="planAt" value="${toLocalInput(P.at)}">`) : ''}
     <div class="big-result">
       <div class="br-k">Backen</div>
       <div class="br-v">${fmtRel(info.bakeAt)}</div>
       <div class="br-s">${P.mode === 'bake' ? `Start: <b>${fmtRel(start)}</b>` : `Start: ${fmtRel(start)}`} · Dauer ${fmtDur(info.total)}${info.endAt !== info.bakeAt ? ` · fertig ${fmtRel(info.endAt)}` : ''}</div>
       ${start < now - 60000 ? '<div class="br-w">⚠️ Der Start läge in der Vergangenheit – wähle einen späteren Backzeitpunkt.</div>' : ''}
     </div>
+    ${P.mode !== 'now' ? planCalendar(steps, base) : ''}
     ${night.length ? `<div class="hint-card warnc"><div>🌙 <b>${night.length} Schritt${night.length > 1 ? 'e' : ''} in der Nacht</b><br><small>${night.slice(0, 3).map((s) => `${new Intl.DateTimeFormat('de-DE', { weekday: 'short' }).format(s.start)} ${fmtTime(s.start)}`).join(' · ')}${night.length > 3 ? ' …' : ''}</small></div>
       ${feat('nightOpt') ? '<button class="btn sm primary" data-action="nightOpt">🪄 Anpassen</button>' : ''}</div>` : ''}
     ${hasAdj ? `<div class="hint-card good"><div>🪄 ${steps.filter((s) => s._adj).map((s) => `${esc(s.name)} ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`).join(' · ')}</div><button class="btn sm ghost" data-action="nightReset">Zurück</button></div>` : ''}
@@ -1468,19 +1488,53 @@ function vPlan(id) {
         ${feat('tempComp') ? fldU('Raumtemperatur', `<input class="in" inputmode="decimal" data-change="planOv" data-k="room" value="${P.ov.room !== undefined && P.ov.room !== '' ? fmtIn(P.ov.room, 1) : ''}" placeholder="${fmtIn(S.settings.refRoom, 1)}">`, '°C', 'Gare-Zeiten werden angepasst') : ''}
       </div>
     </details>`}
+    ${planFlourCard(r)}
     ${yeastFitCard(r)}
+    ${cake ? '' : flourAmp(X.flourCheck(planRecipe(r), { hydration: P.ov.hydration, steps: planDurSteps(r).map((s) => (P.adj?.[s.id] ? { ...s, durationMin: num(s.durationMin) + P.adj[s.id] } : s)) }), { quiet: true })}
     <h3 class="sec">Zeitplan</h3>
     <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '')).join('')}
       <li class="tl-i end"><div class="tl-dot">🎉</div><div class="tl-c"><div class="tl-h"><b>Fertig</b><span class="tl-when">${fmtRel(info.endAt)}</span></div></div></li>
     </ol>
   </div>
   <div class="sticky-actions">
-    <button class="btn ghost" data-action="planIcs">${icon('cal')} Kalender</button>
+    <button class="btn ghost" data-action="planIcs" aria-label="Plan in den Handy-Kalender eintragen">${icon('cal')} In Kalender</button>
     <button class="btn primary grow" data-action="startSession">${icon('play')} ${P.mode === 'now' ? 'Jetzt starten' : 'Plan aktivieren'}</button>
   </div>`;
   return { html };
 }
 
+// 📅 Tag im Monatskalender, Uhrzeit per Chip. Das 🌙 hängt nur an der Uhrzeit (nicht am Tag):
+// es zeigt, bei welcher Uhrzeit ein Schritt in die Nachtruhe fiele.
+const BAKE_TIMES = ['12:00', '17:00', '18:00', '19:00', '20:00'], START_TIMES = ['07:00', '08:00', '12:00', '18:00', '20:00'];
+const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const dayKey = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const hm = (ms) => { const d = new Date(ms); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+const atOn = (key, time) => { const [y, m, d] = key.split('-').map(Number), [h, mi] = time.split(':').map(Number); return new Date(y, m - 1, d, h, mi).getTime(); };
+function planCalendar(steps, base) {
+  const P = S.plan, bake = P.mode === 'bake', now = Date.now(), off = base.bakeOff * 60000;
+  const sel = new Date(P.at), selKey = dayKey(sel), time = hm(P.at), today = dayKey(new Date());
+  const startOf = (at) => (bake ? at - off : at);
+  const nights = (at) => planInfo(steps, startOf(at)).tl.filter((s) => C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo)).length;
+  // Monatsansicht (Wochen beginnen am Montag); ein Tag ist wählbar, wenn ein Start an diesem Tag noch in der Zukunft liegen kann
+  const [vy, vm] = (P.calMonth || selKey.slice(0, 7)).split('-').map(Number);
+  const first = new Date(vy, vm - 1, 1), lead = (first.getDay() + 6) % 7, days = new Date(vy, vm, 0).getDate();
+  const cells = [...Array(lead).fill(''), ...Array.from({ length: days }, (_, i) => dayKey(new Date(vy, vm - 1, i + 1)))];
+  const ok = (key) => startOf(atOn(key, '23:59')) >= now - 60000;
+  const thisMonth = vy === new Date().getFullYear() && vm === new Date().getMonth() + 1;
+  const times = [...new Set([...(bake ? BAKE_TIMES : START_TIMES), time])].sort();
+  return `<section class="card cal">
+    <div class="cal-h"><button class="icon-btn" data-action="planMonth" data-d="-1" ${thisMonth ? 'disabled' : ''} aria-label="Voriger Monat">‹</button><b>${MONTHS[vm - 1]} ${vy}</b><button class="icon-btn" data-action="planMonth" data-d="1" aria-label="Nächster Monat">›</button></div>
+    <div class="cal-g">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d) => `<span class="cal-wd">${d}</span>`).join('')}
+      ${cells.map((k) => (k ? `<button class="cal-d ${k === selKey ? 'on' : ''} ${k === today ? 'today' : ''}" data-action="planDay" data-d="${k}" ${ok(k) ? '' : 'disabled'}>${Number(k.slice(8))}</button>` : '<span></span>')).join('')}</div>
+    <div class="cal-q muted small">${bake ? 'Backen um' : 'Start um'}</div>
+    <div class="chips cal-t">${times.map((t) => { const at = atOn(selKey, t), past = startOf(at) < now - 60000, n = past ? 0 : nights(at);
+      return `<button class="chip ${t === time ? 'on' : ''}" data-action="planTime" data-t="${t}" ${past ? 'disabled' : ''} ${n ? `title="${n} Schritt${n > 1 ? 'e' : ''} in der Nacht"` : ''}>${t}${n ? ' 🌙' : ''}</button>`; }).join('')}</div>
+    <div class="row gap cal-fine"><button class="btn sm ghost" data-action="planShift" data-d="-15">−15 min</button>
+      <input class="in" type="time" step="300" data-change="planClock" value="${time}" aria-label="Uhrzeit genau">
+      <button class="btn sm ghost" data-action="planShift" data-d="15">+15 min</button></div>
+    ${times.some((t) => !(startOf(atOn(selKey, t)) < now - 60000) && nights(atOn(selKey, t))) ? '<p class="muted small" style="margin:6px 0 0">🌙 = bei dieser Uhrzeit fällt ein Schritt in deine Nachtruhe.</p>' : ''}
+  </section>`;
+}
 function initPlan(r) {
   const base = planInfo(r.steps, 0);
   let target = new Date(); target.setHours(19, 0, 0, 0);
@@ -1550,7 +1604,39 @@ function optimizeNight(r) {
 // Rezept für diesen Backtag – auf Wunsch mit den Mengen vom letzten Mal („🎨 Anpassen“), das Rezept selbst bleibt gleich
 function planBaseRecipe(r) {
   const l = S.plan?.usePct && S.logs.find((x) => x.id === S.plan.usePct);
-  return l?.protocol?.pct ? C.applyPct(structuredClone(r), l.protocol.pct) : r;
+  let x = l?.protocol?.pct ? C.applyPct(structuredClone(r), l.protocol.pct) : r;
+  // 🌾 Mehl für diesen Backtag: Rezept-Mehl durch eines meiner Mehle ersetzen (nur Namen – die Mengen bleiben)
+  const map = S.plan?.id === r.id ? S.plan.flourMap || {} : {};
+  if (!isCake(x) && Object.keys(map).length) {
+    x = structuredClone(x);
+    const ren = (n) => map[n] || n;
+    (x.flours || []).forEach((f) => { f.name = ren(f.name); });
+    (x.preferments || []).forEach((p) => { if (!p.seeds) p.flourName = ren(p.flourName); (p.flours || []).forEach((f) => { f.name = ren(f.name); }); });
+  }
+  return x;
+}
+// Karte im Planer: Mehl für diesen Backtag wählen, Vorrat prüfen, Kosten (eingeklappt, nur mit eigenen Mehlen)
+function planFlourCard(r) {
+  if (isCake(r) || !feat('myFlours') || !S.flours.some((m) => m.name)) return '';
+  const P = S.plan, map = P.flourMap || {};
+  const c = calcFor(planRecipe(r), planOv(r));
+  const needs = stockOn() ? X.flourNeeds(c) : [];
+  const short = needs.filter((x) => val(x.f.stock) && num(x.f.stock) < x.g);
+  const cost = X.hasPrice(needs) ? X.flourCost(needs) : null;
+  const rows = (r.flours || []).map((f) => {
+    const cur = map[f.name] || '', now = myF(cur || f.name);
+    return `<div class="adj-row"><span>${myF(f.name) ? fDot(myF(f.name)) : ''}${esc(f.name)} <small class="muted">${fmtNum(f.pct, 0)} %</small></span>
+      <select class="in w150${now && cur ? ' mine" style="--fc:' + fColor(now) : ''}" data-change="planFlour" data-k="${esc(f.name)}" aria-label="Mehl für ${esc(f.name)}"><option value="">wie im Rezept</option>${S.flours.filter((m) => m.name && !C.sameName(m.name, f.name)).map((m) => `<option value="${esc(m.name)}" ${cur === m.name ? 'selected' : ''}>🌾 ${esc(m.name)}</option>`).join('')}</select></div>`;
+  }).join('');
+  const sum = [Object.keys(map).length && `${Object.keys(map).length} getauscht`, short.length ? '⚠️ Vorrat knapp' : needs.some((x) => val(x.f.stock)) && 'Vorrat reicht', cost !== null && `≈ ${fmtNum(cost, 2)} €`].filter(Boolean).join(' · ');
+  return `<details class="card fold" ${P.flOpen || short.length ? 'open' : ''} data-action-toggle="fl">
+    <summary>🌾 Mehl für diesen Backtag <small class="muted">${sum || 'eigene Mehle wählen'}</small></summary>
+    ${rows}
+    ${needs.length ? `<p class="small">${needs.map((x) => `${fDot(x.f)} ${esc(x.f.name)}: <b>${fmtG(x.g)}</b>${val(x.f.stock) ? ` <span class="${num(x.f.stock) < x.g ? 'warnt' : 'muted'}">von ${kg(x.f.stock)}</span>` : ''}`).join('<br>')}</p>` : ''}
+    ${short.length ? `<div class="hint-card warnc small"><div>🫙 Vorrat reicht nicht: ${short.map((x) => `${esc(x.f.name)} fehlen ${fmtG(x.g - num(x.f.stock))}`).join(', ')}</div></div>` : ''}
+    ${cost !== null ? `<p class="muted small">Mehlkosten für diesen Backtag ≈ <b>${fmtNum(cost, 2)} €</b>${c.count > 0 && c.mode !== 'flour' ? ` · ≈ ${fmtNum(cost / c.count, 2)} € pro Stück` : ''}</p>` : ''}
+    ${needs.some((x) => val(x.f.stock)) ? '<p class="muted small">Beim Start wird der Vorrat automatisch abgezogen (bei Abbruch vor dem Kneten wieder gutgeschrieben).</p>' : ''}
+  </details>`;
 }
 function planRecipe(r) {
   const x = planBaseRecipe(r);
@@ -1653,6 +1739,7 @@ function vBakeList() {
   <div class="pad">
     ${notifCard()}
     ${culturesCard()}
+    ${floursCard()}
     ${active.length ? active.map(sessionBanner).join('') : `<div class="empty"><div class="empty-ic">⏲️</div><h2>Gerade läuft nichts</h2><p>Öffne ein Rezept und tippe auf <b>Backen planen</b>. Du siehst sofort, wann du backen kannst – und wirst bei jedem Schritt erinnert.</p><a class="btn primary" href="#/">Zu den Rezepten</a></div>`}
     ${past.length || nCancel ? `<h3 class="sec">Zuletzt</h3>${past.map(pastCard).join('')}
       ${nCancel ? `<button class="more-link" data-action="toggleCancelled">${S.showCancelled ? 'Abgebrochene ausblenden' : `+ ${nCancel} abgebrochene anzeigen`}</button>` : ''}` : ''}
@@ -1965,11 +2052,13 @@ function adjBox(s, stg) {
   const canFlour = !cake && (st === 'main' || flourRows.length > 0), canItem = !cake && st === 'main';
   const addMode = S.adjAdd?.key === key ? S.adjAdd.mode : '';
   const a = (attrs) => `data-id="${s.id}" data-st="${esc(st)}" ${attrs}`;
-  const addForm = addMode === 'flour' ? `<div class="row gap line adj-add"><input class="in grow adj-n" list="adj-flours" placeholder="Mehlsorte" aria-label="Mehlsorte">
+  const myPick = feat('myFlours') ? S.flours.filter((m) => m.name) : [];
+  const addForm = addMode === 'flour' ? `${myPick.length ? `<div class="chips">${myPick.map((m) => `<button class="chip mine" style="--fc:${fColor(m)}" data-action="adjPickFlour" data-v="${esc(m.name)}">${fDot(m)} ${esc(m.name)}</button>`).join('')}</div>` : ''}
+      <div class="row gap line adj-add"><input class="in grow adj-n" list="adj-flours" placeholder="Mehlsorte" aria-label="Mehlsorte">
       ${flourRows.length ? `<select class="in w110 adj-sw" aria-label="dazu oder statt">${['<option value="">dazu</option>', ...flourRows.map((r) => `<option value="${esc(r.key)}">statt ${esc(r.name)}</option>`)].join('')}</select>` : ''}
       <span class="unit-in w90"><input class="in adj-g" inputmode="decimal" placeholder="${flourRows.length ? 'gleich' : '0'}" aria-label="Menge"><span class="u">g</span></span>
       <button class="icon-btn tonal" data-action="adjAddFlour" ${a('')} aria-label="Mehl übernehmen">${icon('check')}</button></div>
-      <datalist id="adj-flours">${[...new Set([...flourRows.map((r) => r.name), ...X.FLOUR_NAMES])].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>`
+      <datalist id="adj-flours">${[...new Set([...myPick.map((m) => m.name), ...flourRows.map((r) => r.name), ...X.FLOUR_NAMES])].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>`
     : addMode === 'item' ? `<div class="row gap line adj-add"><input class="in grow adj-n" list="adj-items" placeholder="Zutat, z. B. Honig" aria-label="Zutat">
       <span class="unit-in w90"><input class="in adj-g" inputmode="decimal" placeholder="0" aria-label="Menge"><span class="u">g</span></span>
       <button class="icon-btn tonal" data-action="adjAddX" ${a('')} aria-label="Zutat übernehmen">${icon('check')}</button></div>
@@ -1982,7 +2071,7 @@ function adjBox(s, stg) {
   ].filter(Boolean);
   return `<details class="adj" data-adj="${esc(key)}" ${S.adjOpen === key ? 'open' : ''}>
     <summary>🎨 Anpassen${changed ? ` <small class="muted">· ${cake ? 'angepasst' : `jetzt ${fmtPct(c.totals.hydration)}`}</small>` : ''}</summary>
-    ${rows.map((r) => `<div class="adj-row ${r.chg ? 'chg' : ''}"><span>${esc(r.name)}</span>${field(r)}</div>`).join('')}
+    ${rows.map((r) => `<div class="adj-row ${r.chg ? 'chg' : ''}"><span>${r.type === 'flour' && myF(r.name) ? fDot(myF(r.name)) : ''}${esc(r.name)}</span>${field(r)}</div>`).join('')}
     ${hasWater ? `<div class="adj-row"><span>Ziel-Hydration <small class="muted">gesamt</small></span><span class="unit-in w90"><input class="in" inputmode="decimal" data-change="adjHyd" data-id="${s.id}" data-st="${esc(st)}" value="${fmtIn(c.totals.hydration, 1)}" aria-label="Ziel-Hydration"><span class="u">%</span></span></div>` : ''}
     ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
     ${addForm}
@@ -2252,7 +2341,9 @@ function vCmp(rid, q) {
   add('Nächstes Mal', esc(A.nextTime), esc(B.nextTime));
   const diff = rows.filter((x) => x.a !== x.b), same = rows.filter((x) => x.a === x.b && x.a !== '–');
   const show = S.cmpAll ? rows.filter((x) => x.a !== '–' || x.b !== '–') : diff;
-  const opt = (sel, side) => `<select class="in" data-change="cmpPick" data-side="${side}" data-rid="${rid}" data-a="${A.id}" data-b="${B.id}">${logs.map((l) => `<option value="${l.id}" ${l.id === sel.id ? 'selected' : ''}>${fmtDate(l.date)}${l.rating ? ` · ${'★'.repeat(l.rating)}` : ''}</option>`).join('')}</select>`;
+  // Kurze, eindeutige Beschriftung: Datum · Hydration · Sterne (zwei Backtage am selben Tag bleiben unterscheidbar)
+  const lbl = (l) => [l.date ? l.date.split('-').reverse().join('.') : '–', num(l.params?.hydration) && fmtPct(l.params.hydration), l.rating && `${l.rating} ★`].filter(Boolean).join(' · ');
+  const opt = (sel, side) => `<select class="in" data-change="cmpPick" data-side="${side}" data-rid="${rid}" data-a="${A.id}" data-b="${B.id}">${logs.map((l) => `<option value="${l.id}" ${l.id === sel.id ? 'selected' : ''}>${lbl(l)}</option>`).join('')}</select>`;
   // Teiggefühl nach Hydration über alle Einträge („Bei 72 % war er immer ‚passt‘“)
   const fh = new Map();
   logs.forEach((l) => (l.protocol?.steps || []).forEach((s) => { if (s.feel && num(l.params?.hydration)) { const k = fmtPct(Math.round(num(l.params.hydration) * 2) / 2); const m = fh.get(k) || {}; m[s.feel] = (m[s.feel] || 0) + 1; fh.set(k, m); } }));
@@ -2336,7 +2427,8 @@ function vLogView(rid, lid, q) {
       <div class="act-row">
         <button class="btn sm" data-action="bakeAgain" data-id="${l.id}">${icon('play')} So nochmal backen</button>
         ${logsFor(rid).length >= 2 ? `<a class="btn sm ghost" href="#/cmp/${rid}?b=${l.id}">⇄ Vergleichen</a>` : ''}
-        ${pr?.pct || !cake ? `<button class="icon-btn" data-action="logMenu" data-id="${l.id}" aria-label="Mehr">${icon('more')}</button>` : ''}
+        ${pr?.pct ? `<button class="btn sm ghost" data-action="logMenu" data-id="${l.id}">🎨 Übernehmen …</button>`
+          : !cake ? `<button class="icon-btn" data-action="logMenu" data-id="${l.id}" aria-label="Mehr">${icon('more')}</button>` : ''}
       </div>`;
   }
   return { html: `
@@ -2453,7 +2545,9 @@ function paramsFrom(r, sess) {
     pf: (r.preferments || []).map((p) => `${p.name} ${fmtNum(p.flourPct, 0)} %`).join(' + ') || 'direkt',
     count: Math.round(c.count * 10) / 10, pieceWeight: c.pieceWeight,
     totalHours: Math.round((total / 60) * 10) / 10,
-    flour: (r.flours || []).map((f) => f.name).filter(Boolean).join(', '),
+    // Mehle des Backtags (inkl. im Planer getauschter oder beim Backen dazugemischter Sorten)
+    flour: (c.totals.flours || []).filter((f) => f.g > 0.5 && f.name).map((f) => `${f.name} ${fmtNum(f.pct, 0)} %`).join(', ')
+      || (r.flours || []).map((f) => f.name).filter(Boolean).join(', '),
   };
 }
 
@@ -2500,6 +2594,124 @@ function culturesCard() {
     <details class="addmore"><summary><span class="btn sm ghost">${icon('plus')} Kultur anlegen</span></summary>
       <div class="chips">${Object.entries(C.CULTURE_TYPES).map(([k, v]) => `<button class="chip" data-action="cultNew" data-v="${k}">${v.icon} ${v.label}</button>`).join('')}</div></details>
   </details>`;
+}
+// ---------- 🌾 Meine Mehle (ab 2.6) ----------
+const flourById = (id) => S.flours.find((f) => f.id === id);
+const myF = (name) => (feat('myFlours') ? X.myFlour(name) : null);
+// Vorrat & Kosten lassen sich getrennt abschalten (Einstellungen → Funktionen → Meine Mehle)
+const stockOn = () => feat('myFlours') && feat('flourStock');
+const fColor = (f) => C.FLOUR_COLORS[f?.color] || C.FLOUR_COLORS.gold;
+// Farbliche Hervorhebung: Punkt bzw. Rahmen in der Farbe des Mehls
+const fDot = (f) => `<i class="fdot" style="--fc:${fColor(f)}" aria-hidden="true"></i>`;
+const mineAttr = (name) => { const f = myF(name); return f ? ` mine" style="--fc:${fColor(f)}` : ''; };
+const kg = (g) => (num(g) >= 1000 ? `${fmtNum(num(g) / 1000, 2)} kg` : fmtG(num(g)));
+const val = (v) => v !== '' && v !== null && v !== undefined;
+function flourSum(f) {
+  const p = X.flourProps(f.name) || {};
+  return [p.w && `W ${fmtNum(p.w, 0)}${f.w === '' ? '*' : ''}`, val(f.protein) && `${fmtNum(f.protein, 1)} % Eiweiß`, stockOn() && val(f.stock) && `🫙 ${kg(f.stock)}`].filter(Boolean).join(' · ');
+}
+function flourWarn(f) {
+  const today = todayISO();
+  if (f.bestBefore && f.bestBefore < today) return 'MHD abgelaufen';
+  if (f.bestBefore && (new Date(f.bestBefore) - new Date(today)) / 86400000 <= 14) return 'MHD bald erreicht';
+  if (stockOn() && val(f.stock) && num(f.stock) < 500) return num(f.stock) <= 0 ? 'leer' : 'Vorrat knapp';
+  return '';
+}
+// Backvorgang abgebrochen/gelöscht, bevor ein Teig gemischt wurde → Mehl wieder dem Vorrat gutschreiben
+async function flourGiveBack(s) {
+  if (!s?.flourUse?.length || s.flourBack) return;
+  if (s.steps.some((x) => x.doneAt && (x.stage || MIX_LIKE.has(x.kind)))) return;
+  for (const u of s.flourUse) { const f = flourById(u.id); if (f && val(f.stock)) { f.stock = num(f.stock) + num(u.g); await saveFlour(f); } }
+  s.flourBack = true;
+  toast('🫙 Mehl wieder im Vorrat gutgeschrieben');
+}
+async function saveFlour(f) {
+  f.updatedAt = Date.now();
+  f.v = Math.max(MG.SCHEMA, num(f.v));
+  const i = S.flours.findIndex((x) => x.id === f.id);
+  if (i >= 0) S.flours[i] = f; else S.flours.push(f);
+  X.setMyFlours(feat('myFlours') ? S.flours : []);
+  await db.put('flours', f);
+  scheduleSync();
+}
+// Karte im Reiter „Backen“ (eingeklappt)
+function floursCard() {
+  if (!feat('myFlours')) return '';
+  const list = S.flours.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+  const warn = list.filter(flourWarn).length;
+  return `<details class="card cult" ${S.flourOpen ? 'open' : ''} data-action-toggle="flours">
+    <summary>🌾 Meine Mehle <small class="muted">${list.length ? `${list.length}${warn ? ` · ${warn} Hinweis${warn > 1 ? 'e' : ''}` : ''}` : 'Mehlsorten mit Packungsangaben'}</small></summary>
+    ${list.map((f) => `<a class="cult-row flour-row" href="#/flour/${f.id}" style="--fc:${fColor(f)}">${fDot(f)}<span class="grow"><b>${esc(f.name || 'Ohne Namen')}</b>${f.brand ? ` <small class="muted">${esc(f.brand)}</small>` : ''}<br><small class="muted">${flourSum(f) || 'noch keine Kennwerte'}</small></span>${flourWarn(f) ? `<span class="pill warnp">${flourWarn(f)}</span>` : ''}</a>`).join('')}
+    <button class="btn sm ghost" data-action="flourNew">${icon('plus')} Mehl anlegen</button>
+    ${list.length ? '' : '<p class="muted small">Trage deine Mehle mit den Angaben von der Packung ein (W-Wert, Eiweiß, Wasseraufnahme …). Alles ist freiwillig – die App rechnet mit dem, was da ist, und hebt deine Mehle in Rezepten farbig hervor.</p>'}
+  </details>`;
+}
+function vFlour(id) {
+  const f = flourById(id);
+  if (!f) return vNotFound();
+  const p = X.flourProps(f.name) || {};
+  const inp = (k, unit, label, hint = '', ph = '') => fldU(label, `<input class="in" inputmode="decimal" data-change="flour" data-id="${f.id}" data-k="${k}" value="${val(f[k]) ? fmtIn(f[k], 2) : ''}" placeholder="${esc(ph)}">`, unit, hint);
+  const st = X.flourStats(f, S.logs, S.recipes);
+  const used = S.recipes.filter((r) => (r.flours || []).some((x) => C.sameName(x.name, f.name)));
+  const maxH = p.w ? X.maxHoursForW(p.w) : null;
+  // Was die App aus den Angaben ableitet (ohne Angaben: Richtwerte der Sorte)
+  const derived = [
+    p.w ? `<li><b>Backstärke W ≈ ${fmtNum(p.w, 0)}</b> <small class="muted">(${esc(p.wSrc)})</small> → verträgt etwa <b>${maxH} h</b> Gärzeit (Stunden im Kühlschrank zählen dabei nur halb).</li>` : p.rye ? '<li><b>Roggen:</b> kaum Kleber – das Gerüst bilden Schleimstoffe und Säure. Ohne Sauerteig wird die Krume oft klitschig.</li>' : '',
+    p.cap ? `<li><b>Wasser:</b> gut verträglich bis ca. <b>${fmtNum(p.cap, 0)} %</b>, empfohlen ca. ${fmtNum(p.cap - 2, 0)} % <small class="muted">(${esc(p.capSrc)})</small>.</li>` : '',
+    p.pl !== null && p.pl !== undefined ? `<li><b>P/L ${fmtNum(p.pl, 2)}:</b> ${p.pl > 0.8 ? 'zäh-elastisch – Teigling länger entspannen lassen, ideal für lange Führung.' : p.pl < 0.4 ? 'sehr dehnbar – straff formen, Stückgare kürzer.' : 'ausgewogen zwischen Stand und Dehnbarkeit.'}</li>` : '',
+    p.falling !== null && p.falling !== undefined ? `<li><b>Fallzahl ${fmtNum(p.falling, 0)} s:</b> ${p.falling < 220 ? 'viel Enzymaktivität – bei langer Gare wird der Teig weich; kürzer/kälter führen.' : p.falling > 380 ? 'wenig Enzyme – Kruste bräunt schwächer; etwas Backmalz hilft.' : 'normale Enzymaktivität.'}</li>` : '',
+  ].filter(Boolean).join('');
+  const html = `
+  <header class="top sub"><a class="icon-btn" href="#/bake" aria-label="Zurück">${icon('back')}</a><div class="grow"><div class="eyebrow">🌾 Meine Mehle${f.kind ? ` · ${esc(C.FLOUR_KINDS[f.kind])}` : ''}</div><h1 class="title sm">${fDot(f)} ${esc(f.name || 'Neues Mehl')}</h1></div>
+    <button class="icon-btn" data-action="flourDel" data-id="${f.id}" aria-label="Mehl löschen">${icon('trash')}</button></header>
+  <div class="pad">
+    <section class="card">
+      ${fld('Name', `<input class="in" data-change="flour" data-id="${f.id}" data-k="name" value="${esc(f.name)}" placeholder="z. B. Caputo Nuvola" list="flour-lib">`, 'So erscheint es in Rezepten und beim Backen')}
+      <datalist id="flour-lib">${X.FLOUR_NAMES.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div class="grid2">
+        ${fld('Hersteller', `<input class="in" data-change="flour" data-id="${f.id}" data-k="brand" value="${esc(f.brand)}" placeholder="optional">`)}
+        ${fld('Sorte', `<select class="in" data-change="flour" data-id="${f.id}" data-k="kind"><option value="">–</option>${Object.entries(C.FLOUR_KINDS).map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`)}
+      </div>
+      <div class="fcolors">${Object.entries(C.FLOUR_COLORS).map(([k, c]) => `<button class="fcol ${f.color === k ? 'on' : ''}" style="--fc:${c}" data-action="flourColor" data-id="${f.id}" data-v="${k}" aria-label="Farbe ${k}"></button>`).join('')}<small class="muted">Farbe in Rezepten</small></div>
+    </section>
+    <section class="card">
+      <div class="card-h"><b>🔬 Kennwerte von der Packung</b><small class="muted">alle freiwillig</small></div>
+      <div class="grid2">
+        ${inp('w', 'W', 'Backstärke', 'Alveograph', p.w && !val(f.w) ? `≈ ${fmtNum(p.w, 0)}` : '')}
+        ${inp('protein', '%', 'Eiweiß', 'Proteingehalt')}
+        ${inp('absorption', '%', 'Wasseraufnahme', 'Farinograph')}
+        ${inp('pl', 'P/L', 'Elastizität', 'Alveograph')}
+        ${inp('falling', 's', 'Fallzahl', 'Enzymaktivität')}
+      </div>
+      <details class="info"><summary>ⓘ Was bedeuten die Werte?</summary>
+        <p><b>W</b> (Backstärke): Energie, um eine Teigblase zu dehnen. Je höher, desto länger hält der Kleber. Unter 200 nur kurze Führungen, 280–320 für 24–48 h, über 350 für Biga und sehr lange Gare.</p>
+        <p><b>Eiweiß</b>: ein Großteil davon bildet den Kleber. Ohne W-Wert schätzt die App ihn daraus (W ≈ 40 × Eiweiß − 210).</p>
+        <p><b>Wasseraufnahme</b>: wie viel Wasser das Mehl für einen Standardteig bindet. Handwerkliche Teige vertragen meist ca. 5–10 %-Punkte mehr.</p>
+        <p><b>P/L</b>: Zähigkeit zu Dehnbarkeit. Um 0,5–0,6 ausgewogen (Pizza), höher = elastisch, niedriger = sehr dehnbar.</p>
+        <p><b>Fallzahl</b>: Maß für stärkeabbauende Enzyme. Niedrig (&lt; 220 s) = viel Enzym, Teig wird bei langer Gare weich; hoch (&gt; 350 s) = blasse Kruste.</p></details>
+      ${derived ? `<div class="derived"><div class="card-h"><b>🧠 Was die App daraus ableitet</b></div><ul>${derived}</ul></div>` : ''}
+    </section>
+    <section class="card">
+      <div class="card-h"><b>${stockOn() ? '🫙 Vorrat, Preis & Haltbarkeit' : '📅 Haltbarkeit'}</b>${flourWarn(f) ? `<span class="pill warnp">${flourWarn(f)}</span>` : ''}</div>
+      ${stockOn() ? `<div class="grid2">
+        ${inp('stock', 'g', 'Vorrat', 'wird beim Backen abgezogen')}
+        ${inp('price', '€/kg', 'Preis')}
+      </div>
+      <div class="chips"><button class="chip" data-action="flourStock" data-id="${f.id}" data-d="1000">+1 kg</button><button class="chip" data-action="flourStock" data-id="${f.id}" data-d="5000">+5 kg</button><button class="chip" data-action="flourStock" data-id="${f.id}" data-d="25000">+25 kg Sack</button></div>` : ''}
+      ${fld('Mindestens haltbar bis', `<input class="in" type="date" data-change="flour" data-id="${f.id}" data-k="bestBefore" value="${esc(f.bestBefore)}">`)}
+    </section>
+    <section class="card">
+      <div class="card-h"><b>📓 Im Tagebuch</b></div>
+      ${st.count ? `<div class="lv-tiles">
+        <div class="lv-tile"><small>Backtage</small><b>${st.count}</b>${st.last ? `<small>zuletzt ${fmtDate(st.last)}</small>` : ''}</div>
+        <div class="lv-tile"><small>Ø Bewertung</small><b>${st.avg ? `${fmtNum(st.avg, 1)} ★` : '–'}</b></div>
+        ${st.sweet ? `<div class="lv-tile"><small>Sweet Spot (ab 4 ★)</small><b>${st.sweet[0] === st.sweet[1] ? fmtPct(st.sweet[0]) : `${fmtNum(st.sweet[0], 1)}–${fmtPct(st.sweet[1])}`}</b><small>Hydration</small></div>` : ''}
+      </div>` : '<p class="muted small">Noch keine Backtage mit diesem Mehl.</p>'}
+      ${used.length ? `<p class="small">In Rezepten: ${used.map((r) => `<a href="#/r/${r.id}">${esc(r.name)}</a>`).join(', ')}</p>` : ''}
+    </section>
+    ${fld('Notizen', `<textarea class="in" rows="2" data-change="flour" data-id="${f.id}" data-k="notes" placeholder="z. B. Bezugsquelle, Erfahrungen">${esc(f.notes)}</textarea>`)}
+  </div>`;
+  return { html };
 }
 function cultureHint() {
   if (!feat('cultures')) return '';
@@ -2584,7 +2796,10 @@ function vSettings() {
       <div class="set-group">Rezepte</div>
       ${toggle('pastry', '🥐 Feingebäck & Kuchen', 'Vorlagen und Kategorien für Croissant, Plunder, Hefeteig, Kuchen und Torten. Vorhandene Rezepte bleiben immer sichtbar.')}
       ${toggle('cultures', '🫙 Meine Kulturen', 'Anstellgut, Madre, LiCoLi & Co. pflegen – Fütter-Erinnerung, Rechner und Auffrischen vor dem Backtag.')}
+      ${toggle('myFlours', '🌾 Meine Mehle', 'Eigene Mehlsorten mit Packungsangaben – farbig in Rezepten, mit Auswirkung auf Ampel und Planer.')}
+      ${feat('myFlours') ? `<div class="sub-opt">${toggle('flourStock', '🫙 Vorrat & Kosten', 'Mehlvorrat beim Backen abziehen, warnen wenn er nicht reicht, Mehlkosten im Planer zeigen.')}</div>` : ''}
       ${toggle('convert', '🔁 Hefe ⇄ Sauerteig umstellen', 'Rezept als Variante auf Sauerteig, Lievito Madre oder Hefe umstellen.')}
+      ${toggle('flourAmp', '🚦 Mehl-Ampel', 'Prüft, ob das Mehl zu Hydration, Gärzeit, Roggenanteil und Butter/Zucker passt.')}
       <div class="set-group">Teilen</div>
       ${toggle('qr', '🔳 Teilen per QR-Code', 'Rezepte als QR-Code zeigen und empfangen.')}
     </details>
@@ -2645,6 +2860,7 @@ function syncCard() {
     <p class="small muted" style="margin-top:0">${esc(s.email)} · zuletzt ${s.lastOk ? fmtRel(s.lastOk) : 'noch nie'}</p>
     ${s.lastError ? `<div class="warn">⚠️ ${esc(s.lastError)}</div>` : ''}
     ${s.cultureSql ? '<div class="warn">🫙 „Meine Kulturen“ werden noch nicht abgeglichen: In Supabase einmal das aktuelle <b>supabase-setup.sql</b> ausführen (siehe ANLEITUNG-UPDATE.txt). Rezepte und Tagebuch laufen normal weiter.</div>' : ''}
+    ${s.flourSql ? '<div class="warn">🌾 „Meine Mehle“ werden noch nicht abgeglichen: In Supabase einmal das aktuelle <b>supabase-setup.sql</b> ausführen (siehe ANLEITUNG-UPDATE.txt). Alles andere läuft normal weiter.</div>' : ''}
     <div class="row gap wrap">
       <button class="btn sm primary" data-action="sbSync" ${s.running ? 'disabled' : ''}>Jetzt abgleichen</button>
       <button class="btn sm ghost" data-action="sbLogout">Abmelden</button>
@@ -2722,12 +2938,13 @@ function importFile() {
         cleanRecipe: (x) => { const m = importRecipe(x); if (m.newer) newer++; return m.rec; },
         cleanLog: (x) => { const m = importLog(x); if (m.newer) newer++; return m.rec; },
         cleanCulture: (x) => { const m = MG.importCulture(x); if (m.newer) newer++; return m.rec; },
+        cleanFlour: (x) => { const m = MG.importFlour(x); if (m.newer) newer++; return m.rec; },
       });
       await reload();
       S.scale = null; S.plan = null;
       scheduleSync(500);
       const open = S.recipes.filter((r) => MG.openQuestions(r).length).length;
-      toast(`✓ Importiert: ${res.recipes} Rezepte, ${res.logs} Einträge${res.cultures ? `, ${res.cultures} Kulturen` : ''}, ${res.photos} Fotos${res.skipped ? ` (${res.skipped} neuere behalten)` : ''}`, 4000);
+      toast(`✓ Importiert: ${res.recipes} Rezepte, ${res.logs} Einträge${res.cultures ? `, ${res.cultures} Kulturen` : ''}${res.flours ? `, ${res.flours} Mehle` : ''}, ${res.photos} Fotos${res.skipped ? ` (${res.skipped} neuere behalten)` : ''}`, 4000);
       if (newer) alert('Diese Sicherung stammt aus einer neueren Teigbuch-Version.\n\nDie Daten wurden vollständig übernommen. Bitte aktualisiere die App, damit alle Angaben genutzt werden können.');
       if (open) { location.hash = '#/fix'; return; }
       render();
@@ -3020,7 +3237,14 @@ const A = {
   snoozeBackup: async () => { S.settings.backupSnooze = Date.now() + 7 * 86400000; await saveSettings(); toast('Erinnere dich in 7 Tagen wieder'); render(); },
   fav: async (el) => { const r = byId(el.dataset.id); r.favorite = !r.favorite; await saveRecipe(r); render(); },
   sheetClose: (el) => { closeSheet(); if (el.dataset.keep) location.hash = el.getAttribute('href'); },
-  sheetPick: (el) => { const it = S.sheetItems[+el.dataset.i]; closeSheet(); it?.run(); },
+  // Erst warten, bis das Schließen des Menüs im Verlauf angekommen ist – sonst würde ein „Zurück“
+  // eine Navigation der gewählten Aktion (z. B. zur neuen Variante) gleich wieder rückgängig machen
+  sheetPick: async (el) => {
+    const it = S.sheetItems[+el.dataset.i], had = !!history.state?.sheet;
+    closeSheet();
+    if (had) await new Promise((res) => { const t = setTimeout(res, 400); window.addEventListener('popstate', () => { clearTimeout(t); setTimeout(res, 0); }, { once: true }); });
+    it?.run();
+  },
   tick: (el) => {
     const on = el.classList.toggle('checked');
     const k = tickKey(el);
@@ -3314,7 +3538,6 @@ const A = {
     render();
   },
   pfExDel: (el, e) => { e?.preventDefault(); const pf = S.draft.preferments[+el.dataset.i]; pf.extras.splice(+el.dataset.k, 1); render(); },
-  pfSeeds: (el) => { const pf = S.draft.preferments[+el.dataset.i]; pf.seeds = !pf.seeds; if (pf.seeds && !pf.flourName) pf.flourName = 'Saaten'; render(); },
   setUnit: async (el) => { S.settings.unitMode = el.dataset.v; await saveSettings(); render(); },
   setYeastType: (el) => {
     const d = S.draft, from = d.yeastType, to = el.dataset.v;
@@ -3374,7 +3597,17 @@ const A = {
     render();
   },
 
-  planMode: (el) => { S.plan.mode = el.dataset.v; render(); },
+  planMode: (el) => { S.plan.mode = el.dataset.v; S.plan.calMonth = null; render(); },
+  // 📅 Kalender im Planer: Tag wählen (Uhrzeit bleibt), Uhrzeit wählen (Tag bleibt), ±15 min, Monat blättern
+  planDay: (el) => { S.plan.at = atOn(el.dataset.d, hm(S.plan.at)); render(); },
+  planTime: (el) => { S.plan.at = atOn(dayKey(new Date(S.plan.at)), el.dataset.t); render(); },
+  planShift: (el) => { S.plan.at += num(el.dataset.d) * 60000; S.plan.calMonth = null; render(); },
+  planMonth: (el) => {
+    const [y, m] = (S.plan.calMonth || dayKey(new Date(S.plan.at)).slice(0, 7)).split('-').map(Number);
+    const d = new Date(y, m - 1 + num(el.dataset.d), 1);
+    S.plan.calMonth = `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
+    render();
+  },
   planCount: (el) => { if (!S.plan) return render(); S.plan.ov.count = Math.max(1, num(S.plan.ov.count) + +el.dataset.d); render(); },
   planYMode: (el) => {
     const r = S.plan && byId(S.plan.id);
@@ -3402,6 +3635,25 @@ const A = {
   },
   nightReset: () => { S.plan.adj = {}; render(); },
   planYeastFit: (el) => { S.plan.yeastFit = el.checked; S.plan.yfOpen = true; render(); },
+  flourNew: async () => {
+    const cols = Object.keys(C.FLOUR_COLORS);
+    const f = C.sanitizeFlour({ name: '', color: cols[S.flours.length % cols.length] });
+    await saveFlour(f);
+    location.hash = `#/flour/${f.id}`;
+    setTimeout(() => $('[data-k="name"]')?.focus(), 60);
+  },
+  flourDel: async (el) => {
+    const f = flourById(el.dataset.id);
+    if (!f || !confirm(`„${f.name || 'Dieses Mehl'}“ löschen? Rezepte und Tagebuch bleiben unverändert.`)) return;
+    await db.del('flours', f.id);
+    await sync.markDeleted('flour', f.id);
+    S.flours = S.flours.filter((x) => x.id !== f.id);
+    X.setMyFlours(feat('myFlours') ? S.flours : []);
+    scheduleSync(500);
+    location.replace('#/bake');
+  },
+  flourColor: async (el) => { const f = flourById(el.dataset.id); if (!f) return; f.color = el.dataset.v; await saveFlour(f); render(); },
+  flourStock: async (el) => { const f = flourById(el.dataset.id); if (!f) return; f.stock = Math.max(0, num(f.stock) + num(el.dataset.d)); await saveFlour(f); toast(`🫙 Vorrat jetzt ${kg(f.stock)}`); render(); },
   planDurReset: () => { S.plan.dur = {}; S.plan.yeastFit = undefined; render(); },
   planIcs: () => {
     const r = S.plan && byId(S.plan.id);
@@ -3424,8 +3676,15 @@ const A = {
       ov, calc: calcFor(planRecipe(r), ov), yeastType: r.yeastType, steps: structuredClone(planStepsBase(r)).map((x) => ({ ...x, doneAt: null })), notified: [], logId: null,
       room: S.plan.ov.room ?? '',
     };
+    // 🌾 Vorrat meiner Mehle abziehen (nur wo ein Vorrat eingetragen ist)
+    const use = stockOn() ? X.flourNeeds(s.calc).filter((x) => val(x.f.stock)) : [];
+    if (use.length) {
+      s.flourUse = use.map((x) => ({ id: x.f.id, g: Math.round(x.g) }));
+      for (const x of use) { const f = flourById(x.f.id); if (f) { f.stock = Math.max(0, num(f.stock) - Math.round(x.g)); await saveFlour(f); } }
+    }
     await saveSession(s);
     S.plan = null;
+    if (use.length) setTimeout(() => toast(`🫙 Vorrat: ${use.map((x) => `−${fmtG(x.g)} ${x.f.name}`).join(', ')}`, 3500), 1600);
     if ('Notification' in window && Notification.permission === 'default') await askNotif();
     location.replace(`#/bake/${s.id}`); // Planer verschwindet aus dem Verlauf
     toast(startAt > Date.now() + 60000 ? '✓ Plan aktiviert – du wirst zum Start erinnert' : '✓ Los geht’s!');
@@ -3484,6 +3743,7 @@ const A = {
       if (S.hands) speak(`Hydration jetzt ${fmtNum(sessCalc(s).totals.hydration)} Prozent.`);
     });
   },
+  adjPickFlour: (el) => { const n = el.closest('.adj')?.querySelector('.adj-n'); if (n) { n.value = el.dataset.v; n.classList.add('mine'); n.style.setProperty('--fc', fColor(myF(el.dataset.v))); } },
   adjAddOpen: (el) => {
     const key = `${el.dataset.id}:${el.dataset.st}`;
     S.adjAdd = S.adjAdd?.key === key && S.adjAdd.mode === el.dataset.m ? null : { key, mode: el.dataset.m };
@@ -3619,7 +3879,7 @@ const A = {
   sessFinish: async (el) => { const s = sessById(el.dataset.id); s.status = 'done'; await saveSession(s); location.hash = '#/bake'; },
   sessCancel: async (el) => {
     if (!confirm('Backvorgang abbrechen?')) return;
-    const s = sessById(el.dataset.id); s.status = 'cancelled'; await saveSession(s); location.hash = '#/bake';
+    const s = sessById(el.dataset.id); s.status = 'cancelled'; await flourGiveBack(s); await saveSession(s); location.hash = '#/bake';
   },
   sessIcs: (el) => {
     const s = sessById(el.dataset.id);
@@ -3639,6 +3899,7 @@ const A = {
         // Schritt-Fotos mitlöschen – außer sie stecken schon in einem Tagebuch-Eintrag
         const used = new Set(S.logs.flatMap((l) => l.photos || []));
         for (const p of s.steps.flatMap((x) => x.photos || [])) if (!used.has(p)) await db.deletePhoto(p);
+        await flourGiveBack(s);
         await db.del('sessions', s.id); S.sessions = S.sessions.filter((x) => x.id !== s.id); location.hash = '#/bake';
       } },
     ]);
@@ -3732,9 +3993,7 @@ const A = {
   logVariant: async (el) => {
     const l = S.logs.find((x) => x.id === el.dataset.id), r = byId(l?.recipeId);
     if (!r || !l.protocol?.pct) return;
-    const c = C.applyPct(structuredClone(r), l.protocol.pct);
-    Object.assign(c, { id: uid(), name: `${r.name} (Variante ${fmtDate(l.date).replace(/^\w+\.,\s*/, '')})`, createdAt: Date.now(), favorite: false, photos: [], cover: null });
-    c.steps.forEach((s) => { s.id = uid(); });
+    const c = asVariant(C.applyPct(structuredClone(r), l.protocol.pct), ` (Variante ${fmtDate(l.date).replace(/^\w+\.,\s*/, '')})`);
     await saveRecipe(c);
     toast('✓ Variante gespeichert – das Original bleibt unverändert', 3500);
     location.hash = `#/r/${c.id}`;
@@ -3931,6 +4190,10 @@ const INPUTS = {
   flourName: (el) => {
     const d = S.draft, f = d.flours[+el.dataset.i], old = f.name;
     f.name = el.value;
+    // Eigenes Mehl farbig hervorheben (live beim Tippen)
+    const m = myF(el.value);
+    el.classList.toggle('mine', !!m);
+    if (m) el.style.setProperty('--fc', fColor(m)); else el.style.removeProperty('--fc');
     d.preferments.forEach((pf) => {
       if (pf.flourName === old) pf.flourName = el.value;
       (pf.flours || []).forEach((x) => { if (x.name === old) x.name = el.value; });
@@ -3988,8 +4251,30 @@ const INPUTS = {
 };
 
 const CHANGES = {
-  planAt: (el) => { const t = new Date(el.value).getTime(); if (Number.isFinite(t)) { S.plan.at = t; render(); } },
+  planClock: (el) => { if (/^\d{2}:\d{2}$/.test(el.value)) { S.plan.at = atOn(dayKey(new Date(S.plan.at)), el.value); render(); } },
   planCult: (el) => { if (S.plan) { S.plan.cult = el.value || null; render(); } },
+  // 🌾 Meine Mehle: Angaben ändern (alles freiwillig). Umbenennen zieht auf Wunsch die Rezepte mit.
+  flour: async (el) => {
+    const f = flourById(el.dataset.id), k = el.dataset.k;
+    if (!f) return;
+    const old = f.name;
+    const raw = { ...f, [k]: ['name', 'brand', 'notes', 'kind', 'bestBefore'].includes(k) ? el.value : C.optNum(el.value) };
+    Object.assign(f, C.sanitizeFlour(raw), { id: f.id, createdAt: f.createdAt });
+    if (k === 'name' && old && f.name && !C.sameName(old, f.name)) {
+      const rs = S.recipes.filter((r) => (r.flours || []).some((x) => C.sameName(x.name, old)));
+      if (rs.length && confirm(`„${old}“ wird in ${rs.length} Rezept${rs.length > 1 ? 'en' : ''} verwendet. Dort auch in „${f.name}“ umbenennen?`)) {
+        for (const r of rs) {
+          const ren = (n) => (C.sameName(n, old) ? f.name : n);
+          r.flours.forEach((x) => { x.name = ren(x.name); });
+          (r.preferments || []).forEach((p) => { p.flourName = ren(p.flourName); (p.flours || []).forEach((x) => { x.name = ren(x.name); }); });
+          await saveRecipe(r);
+        }
+      }
+    }
+    await saveFlour(f);
+    render();
+  },
+  planFlour: (el) => { if (!S.plan) return; S.plan.flourMap ||= {}; if (el.value) S.plan.flourMap[el.dataset.k] = el.value; else delete S.plan.flourMap[el.dataset.k]; S.plan.flOpen = true; render(); },
   // 🧪 Gärzeit eines Schritts für diesen Backtag (in Stunden) – Hefe passt sich an
   planDur: (el) => {
     const P = S.plan, r = P && byId(P.id), st = r?.steps.find((x) => x.id === el.dataset.sid);
@@ -4187,22 +4472,32 @@ document.addEventListener('toggle', (e) => {
   if (e.target.dataset?.actionToggle === 'adj' && S.plan) S.plan.adjOpen = e.target.open;
   if (e.target.dataset?.actionToggle === 'yf' && S.plan) S.plan.yfOpen = e.target.open;
   if (e.target.dataset?.actionToggle === 'cult') S.cultOpen = e.target.open;
+  if (e.target.dataset?.actionToggle === 'flours') S.flourOpen = e.target.open;
+  if (e.target.dataset?.actionToggle === 'fl' && S.plan) S.plan.flOpen = e.target.open;
   if (e.target.dataset?.actionToggle === 'fun') S.funOpen = e.target.open;
 }, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
+// ---------- Kein Zoomen (ab 2.6): Doppeltippen und Zwei-Finger-Zoom unterbinden ----------
+// (iPhone-Safari ignoriert „user-scalable=no“ teilweise – daher zusätzlich die Gesten abfangen)
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || (e.scale !== undefined && e.scale !== 1)) e.preventDefault(); }, { passive: false });
+document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+
 // ---------- Start ----------
 async function reload() {
-  const [recipes, logs, sessions, settings, cultures] = await Promise.all([db.getAll('recipes'), db.getAll('logs'), db.getAll('sessions'), db.get('meta', 'settings'), db.getAll('cultures')]);
-  S.recipes = recipes || []; S.logs = logs || []; S.sessions = sessions || []; S.cultures = cultures || [];
+  const [recipes, logs, sessions, settings, cultures, flours] = await Promise.all([db.getAll('recipes'), db.getAll('logs'), db.getAll('sessions'), db.get('meta', 'settings'), db.getAll('cultures'), db.getAll('flours')]);
+  S.recipes = recipes || []; S.logs = logs || []; S.sessions = sessions || []; S.cultures = cultures || []; S.flours = flours || [];
   if (settings) Object.assign(S.settings, settings);
+  X.setMyFlours(feat('myFlours') ? S.flours : []);
 }
 
 // Nach einem App-Update: vorhandene Daten auf dem Gerät auf das aktuelle Datenformat bringen.
 // (updatedAt bleibt gleich – jedes Gerät migriert selbst, es muss nichts neu synchronisiert werden.)
 async function migrateLocal() {
   let n = 0;
-  for (const [store, list, mig] of [['recipes', S.recipes, MG.migrateRecipe], ['logs', S.logs, MG.migrateLog], ['cultures', S.cultures, MG.migrateCulture]]) {
+  for (const [store, list, mig] of [['recipes', S.recipes, MG.migrateRecipe], ['logs', S.logs, MG.migrateLog], ['cultures', S.cultures, MG.migrateCulture], ['flours', S.flours, MG.migrateFlour]]) {
     for (let i = 0; i < list.length; i++) {
       if (!MG.needsMigration(list[i])) continue;
       const { rec } = mig(list[i]);

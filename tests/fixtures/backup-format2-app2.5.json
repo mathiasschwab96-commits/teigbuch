@@ -1,0 +1,39 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 8,
+ "appVersion": "2.5.0",
+ "exportedAt": "2026-11-25T18:00:00.000Z",
+ "recipes": [
+  {
+   "v": 8,
+   "id": "fx8biga",
+   "name": "Pizza mit Biga-Mischung (Sicherung 2.5)",
+   "category": "pizza",
+   "description": "Testrezept im Format von App 2.5.0",
+   "source": "", "tags": [], "favorite": false, "photos": [], "cover": null,
+   "yield": { "mode": "flour", "count": 1, "pieceWeight": 0, "flour": 1000, "loss": 0 },
+   "flours": [{ "name": "Caputo Nuvola", "pct": 80 }, { "name": "Manitoba", "pct": 20 }],
+   "water": { "pct": 72, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 }, "salt": 2.8, "yeastType": "fresh", "yeastPct": 0.1,
+   "extras": [{ "name": "Bier", "pct": 10 }],
+   "preferments": [
+    { "id": "fx8pf1", "type": "biga", "name": "Biga", "flourPct": 40, "hydration": 50, "yeastPct": 1, "starterPct": 0, "starterHydration": 100, "flourName": "Caputo Nuvola", "liquid": "mix", "saltPct": 0, "seeds": false, "milkShare": 50, "extras": [], "starterFrom": "",
+      "flours": [{ "name": "Caputo Nuvola", "pct": 50 }, { "name": "Manitoba", "pct": 50 }], "liquidName": "Bier" }
+   ],
+   "steps": [
+    { "id": "fx8s1", "kind": "prep", "name": "Biga ansetzen", "durationMin": 15, "location": "rt", "temp": "", "stage": "fx8pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx8s2", "kind": "rest", "name": "Biga reifen", "durationMin": 1440, "location": "fridge", "temp": "", "stage": "fx8pf1", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx8s3", "kind": "mix", "name": "Hauptteig", "durationMin": 20, "location": "rt", "temp": "", "stage": "main", "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx8s4", "kind": "bulk", "name": "Stockgare", "durationMin": 120, "location": "rt", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null },
+    { "id": "fx8s5", "kind": "bake", "name": "Backen", "durationMin": 20, "location": "oven", "temp": "", "stage": null, "notes": "", "parallel": false, "align": "", "repeat": null }
+   ],
+   "ddt": 23, "notes": "",
+   "lamination": { "pct": 0, "name": "" }, "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 }, "parts": [],
+   "createdAt": 1795600000000, "updatedAt": 1795600100000
+  }
+ ],
+ "logs": [],
+ "cultures": [],
+ "photos": []
+}

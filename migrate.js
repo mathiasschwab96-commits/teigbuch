@@ -34,9 +34,12 @@
 //   8  App 2.4 – Vorteige: flours [{name, pct}] (Mehlmischung im Vorteig; leer = eine Sorte wie bisher über flourName),
 //               liquidName (Flüssigkeit statt Milch, z. B. Bier/Buttermilch; '' = Milch wie bisher).
 //               Bisher immer eine Sorte und Milch → leer, keine Rückfrage. flourName bleibt (erste Sorte) für ältere Apps.
-import { num, sanitizeRecipe, sanitizeLog, sanitizeCulture, CATEGORIES, isCake } from './calc.js';
+//   9  App 2.6 – neue Datenart „Meine Mehle“ (IndexedDB „flours“, DB-Version 3; Sicherung „flours“; Sync kind 'flour').
+//               Rezepte verweisen weiterhin nur über den Mehlnamen → an Rezepten/Tagebuch ändert sich nichts.
+//               Ältere Sicherungen haben keine Mehle → einfach keine, keine Rückfrage.
+import { num, sanitizeRecipe, sanitizeLog, sanitizeCulture, sanitizeFlour, CATEGORIES, isCake } from './calc.js';
 
-export const SCHEMA = 8;
+export const SCHEMA = 9;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -83,6 +86,8 @@ const RECIPE_MIGRATIONS = {
       ? { ...pf, flours: pf.flours ?? [], liquidName: pf.liquidName ?? '' } : pf));
     return r;
   },
+  // 8 → 9: keine Änderung am Rezept (neu ist nur die eigene Datenart „Meine Mehle“)
+  8: (r) => r,
 };
 
 const LOG_MIGRATIONS = {
@@ -98,6 +103,7 @@ const LOG_MIGRATIONS = {
   5: (l) => l,
   6: (l) => l,
   7: (l) => l,
+  8: (l) => l,
 };
 
 function run(rec, migrations) {
@@ -119,6 +125,10 @@ export const migrateLog = (l) => run(l, LOG_MIGRATIONS);
 const CULTURE_MIGRATIONS = {};
 export const migrateCulture = (c) => run(c, CULTURE_MIGRATIONS);
 export function importCulture(raw) { const m = migrateCulture(raw); return { rec: sanitizeCulture(m.rec), newer: m.newer }; }
+// Meine Mehle gibt es ab Schema 9 – noch keine Migrationen
+const FLOUR_MIGRATIONS = {};
+export const migrateFlour = (f) => run(f, FLOUR_MIGRATIONS);
+export function importFlour(raw) { const m = migrateFlour(raw); return { rec: sanitizeFlour(m.rec), newer: m.newer }; }
 export const needsMigration = (rec) => (Math.floor(num(rec?.v)) || 1) < SCHEMA;
 
 // DER eine Weg für alle Daten von außen (Sicherungsdatei, QR-Code, Geräte-Sync):

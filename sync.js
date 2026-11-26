@@ -5,7 +5,7 @@
 // zuletzt gespeicherte Version (updatedAt). Gelöschtes wird als „Grabstein“ (deleted=true) übertragen.
 import * as db from './db.js';
 import { safeId } from './calc.js';
-import { importRecipe, importLog, importCulture } from './migrate.js';
+import { importRecipe, importLog, importCulture, importFlour } from './migrate.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 const AUTH_ID = 'auth', STATE_ID = 'sync';
@@ -37,6 +37,7 @@ export const info = () => ({
   lastOk: state.lastOk, lastError: state.lastError, pending: state.pendingDeletes.length,
   // Supabase-Tabelle kennt die Datenart „culture“ noch nicht → einmalig SQL ausführen (siehe Anleitung)
   cultureSql: !!state.cultureSql,
+  flourSql: !!state.flourSql,
 });
 export const onUpdate = (fn) => listeners.add(fn);
 const emit = () => listeners.forEach((fn) => { try { fn(info()); } catch { /* ignore */ } });
@@ -265,7 +266,7 @@ const ROW_FIELDS = 'id,kind,data,deleted,updated_at,server_at';
 // Einen Server-Eintrag lokal übernehmen – die neuere Version gewinnt
 async function applyRow(row) {
   const id = safeId(row.id);
-  const store = { recipe: 'recipes', log: 'logs', culture: 'cultures' }[row.kind] || null;
+  const store = { recipe: 'recipes', log: 'logs', culture: 'cultures', flour: 'flours' }[row.kind] || null;
   if (!store || !id) return 0;
   const remoteAt = Number(row.updated_at) || 0;
   // Hier schon gelöscht und noch nicht hochgeladen → nicht wieder auferstehen lassen
@@ -281,7 +282,7 @@ async function applyRow(row) {
   if (!row.data) return 0;
   if (!local || remoteAt > localAt) {
     // Daten von Geräten mit älterer App-Version erst auf den aktuellen Stand bringen
-    const clean = (row.kind === 'recipe' ? importRecipe(row.data) : row.kind === 'culture' ? importCulture(row.data) : importLog(row.data)).rec;
+    const clean = (row.kind === 'recipe' ? importRecipe(row.data) : row.kind === 'culture' ? importCulture(row.data) : row.kind === 'flour' ? importFlour(row.data) : importLog(row.data)).rec;
     clean.id = id;
     clean.updatedAt = remoteAt;
     await db.put(store, clean);
@@ -317,7 +318,7 @@ async function push() {
       if (state.synced[rec.id] !== at) rows.push({ user_id: uid, id: rec.id, kind, data: strip(rec), deleted: false, updated_at: at });
     }
   }
-  const deletes = state.pendingDeletes.filter((d) => d.kind !== 'culture');
+  const deletes = state.pendingDeletes.filter((d) => d.kind !== 'culture' && d.kind !== 'flour');
   deletes.forEach((d) => rows.push({ user_id: uid, id: d.id, kind: d.kind, data: null, deleted: true, updated_at: d.at }));
   const accepted = new Set();
   for (let i = 0; i < rows.length; i += 200) {
@@ -329,23 +330,25 @@ async function push() {
   }
   // Kulturen (ab App 2.1) GETRENNT senden: Ist die Supabase-Tabelle noch nicht erweitert, scheitert nur dieser Teil –
   // Rezepte und Tagebuch synchronisieren trotzdem. Die App zeigt dann den Hinweis auf das einmalige SQL.
-  const cRows = [];
-  for (const rec of await db.getAll('cultures')) {
-    const at = rec.updatedAt || 0;
-    if (state.synced[rec.id] !== at) cRows.push({ user_id: uid, id: rec.id, kind: 'culture', data: strip(rec), deleted: false, updated_at: at });
-  }
-  const cDeletes = state.pendingDeletes.filter((d) => d.kind === 'culture');
-  cDeletes.forEach((d) => cRows.push({ user_id: uid, id: d.id, kind: 'culture', data: null, deleted: true, updated_at: d.at }));
-  if (cRows.length) {
+  // Ab App 2.6 genauso: „Meine Mehle“ (kind 'flour') in einer eigenen Anfrage
+  for (const [store, kind] of [['cultures', 'culture'], ['flours', 'flour']]) {
+    const cRows = [];
+    for (const rec of await db.getAll(store)) {
+      const at = rec.updatedAt || 0;
+      if (state.synced[rec.id] !== at) cRows.push({ user_id: uid, id: rec.id, kind, data: strip(rec), deleted: false, updated_at: at });
+    }
+    const cDeletes = state.pendingDeletes.filter((d) => d.kind === kind);
+    cDeletes.forEach((d) => cRows.push({ user_id: uid, id: d.id, kind, data: null, deleted: true, updated_at: d.at }));
+    if (!cRows.length) continue;
     try {
       const res = await api('/rest/v1/items?on_conflict=user_id,id&select=id', {
         method: 'POST', body: cRows, headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       });
       (res || []).forEach((x) => accepted.add(x.id));
       rows.push(...cRows); deletes.push(...cDeletes);
-      state.cultureSql = false;
+      if (kind === 'culture') state.cultureSql = false; else state.flourSql = false;
     } catch (e) {
-      if (/check|constraint|kind|23514|violat/i.test(String(e?.message || e))) state.cultureSql = true; else throw e;
+      if (/check|constraint|kind|23514|violat/i.test(String(e?.message || e))) { if (kind === 'culture') state.cultureSql = true; else state.flourSql = true; } else throw e;
     }
   }
   // Abgelehnt = der Server hat bereits eine neuere Version (z. B. von einem anderen Gerät) → diese holen

@@ -507,6 +507,27 @@ export function sanitizeCulture(c) {
   };
 }
 
+// ---------- Meine Mehle (ab Schema 9): eigene Mehlsorten mit Packungsangaben ----------
+// Alle Kennwerte sind freiwillig ('' = nicht angegeben → die App schätzt bzw. nimmt Richtwerte der Sorte).
+export const FLOUR_KINDS = {
+  tipo00: 'Tipo 00', tipo0: 'Tipo 0 / 1', wheat: 'Weizenmehl (405–1050)', manitoba: 'Manitoba / Brotmehl', whole: 'Vollkorn',
+  spelt: 'Dinkel', rye: 'Roggen', durum: 'Hartweizen / Semola', other: 'Sonstiges',
+};
+export const FLOUR_COLORS = { gold: '#C98A2E', green: '#2F7A4A', blue: '#3F86B5', red: '#C2492D', purple: '#7A5AA6', brown: '#8A5A3B' };
+const F_KEYS = ['v', 'id', 'name', 'kind', 'brand', 'w', 'protein', 'pl', 'absorption', 'falling', 'price', 'stock', 'bestBefore', 'color', 'notes', 'createdAt', 'updatedAt'];
+export function sanitizeFlour(f) {
+  const pos = (v, max) => { const x = optNum(v); return x === '' ? '' : Math.min(max, Math.max(0, x)); };
+  return {
+    ...keepUnknown(f, F_KEYS),
+    v: Math.max(1, Math.floor(num(f?.v)) || 1), id: safeId(f?.id) || uid(), name: str(f?.name, 80).trim(),
+    kind: Object.prototype.hasOwnProperty.call(FLOUR_KINDS, f?.kind) ? f.kind : '', brand: str(f?.brand, 80),
+    w: pos(f?.w, 600), protein: pos(f?.protein, 30), pl: pos(f?.pl, 5), absorption: pos(f?.absorption, 100), falling: pos(f?.falling, 900),
+    price: pos(f?.price, 1000), stock: pos(f?.stock, 1000000), bestBefore: /^\d{4}-\d{2}-\d{2}$/.test(f?.bestBefore || '') ? f.bestBefore : '',
+    color: Object.prototype.hasOwnProperty.call(FLOUR_COLORS, f?.color) ? f.color : 'gold', notes: str(f?.notes, 2000),
+    createdAt: num(f?.createdAt) || Date.now(), updatedAt: num(f?.updatedAt) || Date.now(),
+  };
+}
+
 // Teiggefühl (Backprotokoll, ab Schema 5)
 export const FEELS = { firm: 'zu fest', ok: 'passt', soft: 'zu weich', sticky: 'klebrig' };
 const arr = (v) => (Array.isArray(v) ? v : []);

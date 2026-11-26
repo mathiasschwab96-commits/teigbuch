@@ -119,7 +119,6 @@ details.info p { margin: 0 0 8px; font-size: .9rem; color: var(--muted); }
 .warn { background: var(--warn-soft); color: var(--text); border-radius: var(--r-sm); padding: 10px 12px; margin: 10px 0; font-size: .92rem; }
 .pill { font-size: .76rem; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-weight: 650; }
 .pill.ok { background: var(--ok-soft); color: var(--ok); }
-.kbd { display: inline-block; border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
 
 /* ---------- Übersicht ---------- */
 .search { display: flex; align-items: center; gap: 8px; background: var(--surface); border-radius: 999px; padding: 0 16px; margin: 6px 0 4px; color: var(--muted); box-shadow: var(--shadow); }
@@ -156,7 +155,6 @@ details.info p { margin: 0 0 8px; font-size: .9rem; color: var(--muted); }
 .banner-k span:last-child { white-space: nowrap; }
 .banner-v { font-size: 1.02rem; font-weight: 700; margin-top: 2px; }
 .more-link { display: block; text-align: center; font-size: .88rem; font-weight: 650; text-decoration: none; padding: 4px 0 8px; }
-.banner-s { font-size: .88rem; opacity: .92; }
 .cd { font-variant-numeric: tabular-nums; font-weight: 500; opacity: .95; }
 .cd.overdue, .ht-cd.overdue { color: var(--warn); }
 .banner .cd.overdue { color: #FFE2A8; }
@@ -303,8 +301,6 @@ i.loc-rt { background: var(--rt); } i.loc-fridge { background: var(--fridge); } 
 .pchip { background: var(--surface-2); border-radius: 999px; padding: 3px 10px; font-size: .82rem; }
 .next { background: var(--accent-soft); border-radius: 12px; padding: 8px 11px; font-size: .92rem; }
 details.log > summary { display: flex; align-items: center; gap: 10px; }
-details.log > summary .log-d { font-weight: 700; }
-details.log > summary .log-h { color: var(--muted); font-size: .86rem; }
 .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .thumb { width: 72px; height: 72px; border-radius: 14px; border: 0; padding: 0; cursor: pointer; }
 .thumbs.big .thumb { width: 100px; height: 100px; }
@@ -358,7 +354,6 @@ body[data-view="plan"] #view { padding-bottom: 80px; }
 .pf-card { box-shadow: inset 4px 0 0 var(--gold), var(--shadow); }
 .pf-ic { font-size: 1.5rem; }
 .pf-out { background: var(--surface-2); border-radius: 12px; padding: 8px 12px; font-size: .9rem; margin-top: 6px; }
-.add-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .steps-edit { list-style: none; padding: 0; margin: 10px 0; }
 .se { background: var(--surface); border-radius: var(--r-sm); margin: 8px 0; overflow: hidden; box-shadow: inset 4px 0 0 var(--rt), var(--shadow); }
 .se.loc-fridge { box-shadow: inset 4px 0 0 var(--fridge), var(--shadow); } .se.loc-warm { box-shadow: inset 4px 0 0 var(--warm), var(--shadow); } .se.loc-oven { box-shadow: inset 4px 0 0 var(--oven), var(--shadow); }
@@ -611,3 +606,42 @@ body[data-view="edit"] .wiz-foot { bottom: 0; padding-bottom: calc(10px + env(sa
 .yfit .check { margin-top: 8px; }
 .conv-list { margin: 0 0 8px; padding-left: 18px; text-align: left; }
 .conv-list li { margin: 3px 0; }
+/* ---------- 2.5: Mehl-Ampel ---------- */
+.amp { border-radius: 14px; padding: 10px 12px; margin: 10px 0; background: var(--surface-2); border-left: 4px solid transparent; }
+.amp > summary { cursor: pointer; list-style: none; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.amp > summary::-webkit-details-marker { display: none; }
+.amp > summary small { color: var(--muted); }
+.amp p { margin: 8px 0 0; line-height: 1.4; }
+.amp-green { border-left-color: var(--ok); }
+.amp-yellow { border-left-color: var(--gold); background: var(--warn-soft); }
+.amp-red { border-left-color: var(--danger); background: var(--accent-soft); }
+/* ---------- 2.6: kein Zoomen (Doppeltippen) ---------- */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* ---------- 2.6: Meine Mehle ---------- */
+.fdot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: var(--fc, var(--gold)); margin-right: 6px; vertical-align: .05em; box-shadow: 0 0 0 2px color-mix(in srgb, var(--fc, var(--gold)) 25%, transparent); }
+.in.mine { border-color: var(--fc); background: color-mix(in srgb, var(--fc) 12%, var(--surface-2)); font-weight: 600; }
+.chip.mine { background: color-mix(in srgb, var(--fc) 16%, var(--surface-2)); border: 1.5px solid var(--fc); }
+.flour-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-left: 4px solid var(--fc); padding-left: 10px; margin: 6px 0; border-radius: 4px; text-decoration: none; color: inherit; }
+.pill.warnp { background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+.fcolors { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.fcol { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--surface); background: var(--fc); box-shadow: 0 0 0 1.5px var(--line); cursor: pointer; padding: 0; }
+.fcol.on { box-shadow: 0 0 0 3px var(--text); }
+.derived { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.derived ul { margin: 6px 0 0; padding-left: 18px; }
+.derived li { margin: 6px 0; line-height: 1.4; }
+.w150 { flex: 0 0 150px; width: 150px; padding-left: 8px; padding-right: 4px; }
+/* ---------- 2.6.1: Kalender im Planer ---------- */
+.cal { padding: 12px; }
+.cal-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.cal-h .icon-btn { font-size: 1.4rem; }
+.cal-h .icon-btn:disabled { opacity: .3; }
+.cal-g { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-wd { text-align: center; font-size: .75rem; color: var(--muted); padding: 2px 0; }
+.cal-d { aspect-ratio: 1; min-height: 38px; border: 0; border-radius: 50%; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.cal-d.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cal-d.on { background: var(--accent); color: var(--accent-ink); }
+.cal-d:disabled { color: var(--muted); opacity: .4; cursor: default; }
+.cal-q { margin: 12px 0 6px; }
+.cal-t .chip:disabled { opacity: .4; }
+.cal-fine { margin-top: 8px; align-items: center; }
+.cal-fine .in { flex: 1; text-align: center; font-weight: 700; }

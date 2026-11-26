@@ -1,13 +1,14 @@
 // Teigbuch – lokale Speicherung (IndexedDB), Fotos, Export/Import
 const DB_NAME = 'teigbuch';
 // Version 2 (App 2.1): zusätzlicher Speicher „cultures“ – vorhandene Daten bleiben unberührt
-const STORES = ['recipes', 'logs', 'sessions', 'photos', 'meta', 'cultures'];
+// Version 3 (App 2.6): zusätzlicher Speicher „flours“ (Meine Mehle)
+const STORES = ['recipes', 'logs', 'sessions', 'photos', 'meta', 'cultures', 'flours'];
 let dbPromise;
 
 function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((res, rej) => {
-      const req = indexedDB.open(DB_NAME, 2);
+      const req = indexedDB.open(DB_NAME, 3);
       req.onupgradeneeded = () => {
         const d = req.result;
         STORES.forEach((s) => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' }); });
@@ -140,16 +141,24 @@ export async function buildExport({ recipeIds = null, withPhotos = true, meta = 
   }
   // Kulturen nur in der kompletten Sicherung (nicht beim Export einzelner Rezepte)
   const cultures = recipeIds ? [] : await getAll('cultures');
-  return { app: 'Teigbuch', format: 2, ...meta, exportedAt: new Date().toISOString(), recipes, logs, cultures, photos };
+  // Meine Mehle (ab App 2.6) ebenfalls nur in der kompletten Sicherung
+  const flours = recipeIds ? [] : await getAll('flours');
+  return { app: 'Teigbuch', format: 2, ...meta, exportedAt: new Date().toISOString(), recipes, logs, cultures, flours, photos };
 }
 
-export async function importData(obj, { cleanRecipe = (x) => x, cleanLog = (x) => x, cleanCulture = (x) => x } = {}) {
+export async function importData(obj, { cleanRecipe = (x) => x, cleanLog = (x) => x, cleanCulture = (x) => x, cleanFlour = (x) => x } = {}) {
   if (!obj || obj.app !== 'Teigbuch' || !Array.isArray(obj.recipes)) throw new Error('Das ist keine Teigbuch-Datei.');
-  const out = { recipes: 0, logs: 0, cultures: 0, photos: 0, skipped: 0 };
+  const out = { recipes: 0, logs: 0, cultures: 0, flours: 0, photos: 0, skipped: 0 };
   for (const raw of Array.isArray(obj.cultures) ? obj.cultures : []) {
     const c = cleanCulture(raw);
     const ex = await get('cultures', c.id);
     if (!ex || (c.updatedAt || 0) >= (ex.updatedAt || 0)) { await put('cultures', { ...c, updatedAt: Date.now() }); out.cultures++; } else out.skipped++;
+  }
+  // Ältere Sicherungen haben keine „flours“ → einfach keine Mehle
+  for (const raw of Array.isArray(obj.flours) ? obj.flours : []) {
+    const f = cleanFlour(raw);
+    const ex = await get('flours', f.id);
+    if (!ex || (f.updatedAt || 0) >= (ex.updatedAt || 0)) { await put('flours', { ...f, updatedAt: Date.now() }); out.flours++; } else out.skipped++;
   }
   for (const ph of obj.photos || []) {
     const id = String(ph.id || '').replace(/[^\w-]/g, '');

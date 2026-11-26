@@ -398,6 +398,30 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   check('KI: Mehlmischung und Bier im Sauerteig erkannt', kb.preferments[0].flours.length === 2 && kb.preferments[0].liquidName === 'Bier' && near(ckb.pfs[0].milkG, 100, 0.5) && near(ckb.main.extras.find((e) => e.name === 'Bier').total, 100, 0.5) && ckb.warnings.length === 0);
 }
 
+// ---------- 3i) Sicherung aus App 2.5 (Schema 8) → Schema 9: Meine Mehle ----------
+{
+  group('Sicherung aus App 2.5 (backup-format2-app2.5.json) + Meine Mehle 2.6');
+  const f = await load('backup-format2-app2.5.json');
+  const { rec: r, newer } = MG.importRecipe(f.recipes[0]);
+  check('Rezept auf aktuelles Format gebracht, Inhalt unverändert', r.v === MG.SCHEMA && !newer && MG.SCHEMA >= 9 && r.preferments[0].flours.length === 2 && r.preferments[0].liquidName === 'Bier', `v=${r.v}`);
+  check('Sicherung ohne „flours“ → keine Mehle, kein Fehler', !('flours' in f) || Array.isArray(f.flours));
+  const c = C.calc(r);
+  check('Rechnung unverändert: Biga 200 g Nuvola + 200 g Manitoba, Hauptteig 600 g Nuvola', near(c.pfs[0].flourParts[0].g, 200, 0.01) && near(c.pfs[0].flourParts[1].g, 200, 0.01) && near(c.main.flours[0].g, 600, 0.01) && near(c.main.flours[1].g, 0, 0.01));
+  // Datenart „Meine Mehle“: alles freiwillig, Unsinn wird bereinigt, unbekannte Felder bleiben
+  const fl = MG.importFlour({ id: 'nuv', name: 'Caputo Nuvola', w: '310', protein: 13, absorption: '', falling: -5, color: 'lila', zukunft: 42 }).rec;
+  check('Mehl: Werte bereinigt (W 310, leer bleibt leer, negative Fallzahl → 0, unbekannte Farbe → gold), unbekanntes Feld bleibt', fl.v === MG.SCHEMA && fl.w === 310 && fl.protein === 13 && fl.absorption === '' && fl.falling === 0 && fl.color === 'gold' && fl.zukunft === 42);
+  const X = await import('../extras.js');
+  X.setMyFlours([fl, MG.importFlour({ id: 'x2', name: 'Hausmehl', protein: 12 }).rec, MG.importFlour({ id: 'x3', name: 'Enzymmehl', w: 260, falling: 170 }).rec]);
+  const p1 = X.flourProps('Caputo Nuvola'), p2 = X.flourProps('hausmehl');
+  check('Eigenes Mehl: W von der Packung hat Vorrang', p1.mine && p1.w === 310 && p1.wSrc === 'Packung');
+  check('Ohne W: aus Eiweiß geschätzt (12 % → W 270, verträgt ca. 72,6 % Wasser)', p2.mine && p2.w === 270 && /geschätzt/.test(p2.wSrc) && near(p2.cap, 72.6, 0.01));
+  const ampR = { ...roundtrip(r), flours: [{ name: 'Enzymmehl', pct: 100 }], preferments: [], water: { pct: 65 }, steps: [{ id: 'a', kind: 'mix', stage: 'main', durationMin: 15, location: 'rt' }, { id: 'b', kind: 'proof', durationMin: 2880, location: 'fridge' }] };
+  const amp = X.flourCheck(ampR);
+  check('Niedrige Fallzahl (170 s) + 24 h Gare → Ampel warnt (Enzyme)', amp.level !== 'green' && amp.items.some((x) => /Fallzahl/.test(x.text)), amp.level);
+  check('Mehlbedarf und Kosten je eigenem Mehl', (() => { X.setMyFlours([{ ...fl, price: 2.5 }]); const n = X.flourNeeds(C.calc({ ...roundtrip(r), preferments: [] })); return n.length === 1 && near(n[0].g, 800, 0.01) && near(X.flourCost(n), 2, 0.001); })());
+  X.setMyFlours([]);
+}
+
 // ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
 {
   group('Rezept aus KI-Antwort (ki-import.js)');
