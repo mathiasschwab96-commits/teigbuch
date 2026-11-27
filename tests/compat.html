@@ -422,6 +422,40 @@ const roundtrip = (o) => JSON.parse(JSON.stringify(o));
   X.setMyFlours([]);
 }
 
+// ---------- 3j) Sicherung aus App 2.6 (Schema 9) → Schema 10: Getreide + Art bei „Meine Mehle“ ----------
+{
+  group('Sicherung aus App 2.6 (backup-format2-app2.6.json) + Mehl-Katalog 2.7');
+  const f = await load('backup-format2-app2.6.json');
+  const fl = f.flours.map((x) => MG.importFlour(x).rec), by = (id) => fl.find((x) => x.id === id);
+  check('Alle Mehle auf Schema 10, Werte unverändert, alte „Sorte“ bleibt', fl.every((x) => x.v === MG.SCHEMA) && MG.SCHEMA >= 10 && by('fl00').w === 260 && by('fl00').kind === 'tipo00' && by('flrog').falling === 180 && by('flw').stock === 3000);
+  check('Eindeutige Sorten übernommen: Tipo 00 → Weizen/Tipo 00, Roggen → Getreide Roggen (Art leer)', by('fl00').grain === 'weizen' && by('fl00').type === 'it-00' && by('flrog').grain === 'roggen' && by('flrog').type === '');
+  check('Nicht eindeutig → nichts geraten: Vollkorn/ohne Sorte bleiben leer, „Weizenmehl (405–1050)“ nur Getreide', by('flvk').grain === '' && by('flvk').type === '' && by('flx').grain === '' && by('flw').grain === 'weizen' && by('flw').type === '');
+  check('Unbekanntes Feld bleibt erhalten', by('flvk').zukunft === 'bleibt');
+  check('Migration mehrfach ausführbar (idempotent)', JSON.stringify(MG.importFlour(by('fl00')).rec) === JSON.stringify(by('fl00')));
+  check('Getreide/Art bereinigt: Unsinn → leer, unbekannte gültige Art (neuere App) bleibt', (() => { const a = MG.importFlour({ id: 'q', name: 'x', grain: '<b>', type: 'zz-neu' }).rec; return a.grain === '' && a.type === 'zz-neu'; })());
+  const r = MG.importRecipe(f.recipes[0]).rec;
+  check('Rezept unverändert (Schema 10)', r.v === MG.SCHEMA && r.flours.length === 2 && r.flours[0].name === 'Weizenmehl 700 Fuchsenmühle');
+  const X = await import('../extras.js');
+  // Namen erkennen (AT/DE/IT)
+  const tn = (n) => X.typeFromName(n)?.id || '';
+  check('Art aus dem Namen: W700, R960, 1050, Tipo 00, Tipo 00 W 330, Dinkel 630, Semola, Vollkorn', tn('Weizenmehl 700 Fuchsenmühle') === 'at-w700' && tn('Roggenmehl R960') === 'at-r960' && tn('Weizenmehl Type 1050') === 'de-1050'
+    && tn('Tipo 00') === 'it-00' && tn('Caputo Tipo 00 W 330') === 'it-00s' && tn('Dinkelmehl 630') === 'de-d630' && tn('Semola rimacinata') === 'it-semrim' && tn('Weizenvollkornmehl') === 'w-voll' && tn('Buchweizenmehl') === 'o-buchw' && tn('Caputo Nuvola') === '');
+  check('Österreichische Typen sind kein W-Wert (W1600 ≠ W 160, W700 ≠ W 700)', X.wInName('Weizenmehl W1600') === 0 && X.wInName('Weizenmehl W700') === 0 && X.wInName('Tipo 00 W 300') === 300);
+  X.setMyFlours(fl);
+  const pw = X.flourProps('Weizenmehl 700 Fuchsenmühle'), pr = X.flourProps('Roggenmehl 960'), p0 = X.flourProps('Caputo Pizzeria');
+  check('Richtwerte über Getreide + Name: W700 → W ≈ 230, Roggen ohne W', pw.mine && pw.w === 230 && /W700/.test(pw.wSrc) && pr.rye && pr.w === null && p0.w === 260 && p0.wSrc === 'Packung');
+  check('Ohne Getreide weiter wie bisher (Weizen-Formel)', (() => { const h = MG.importFlour({ id: 'h', name: 'Hausmehl', protein: 12 }).rec; X.setMyFlours([h]); const p = X.flourProps('Hausmehl'); return p.w === 270 && Math.abs(p.cap - 72.6) < 0.01; })());
+  check('Dinkel: viel Eiweiß ≠ viel Kraft (13 % → W ≈ 186 statt 310)', (() => { X.setMyFlours([MG.importFlour({ id: 'd', name: 'Mein Dinkel', grain: 'dinkel', type: 'de-d630', protein: 13 }).rec]); return X.flourProps('Mein Dinkel').w === 186; })());
+  X.setMyFlours([]);
+  // Mischung und Mehltausch
+  const ana = X.blendInsights([{ name: 'Weizenmehl 550', pct: 70 }, { name: 'Roggenmehl 1150', pct: 30 }]);
+  check('Mischungs-Analyse: Zusammensetzung, Roggen-Säuerung', ana.blend.rye === 30 && ana.items.some((x) => /70 % Weizen · 30 % Roggen/.test(x.t)) && ana.items.some((x) => /Sauerteig/.test(x.t)));
+  const sw = X.waterShift([{ name: 'Weizenmehl 1050', pct: 100 }], [{ name: 'Weizenmehl W700', pct: 100 }]);
+  check('Tausch 1050 → W700: nimmt ca. 2 %-Punkte weniger Wasser auf', sw && sw.d < -1 && sw.d > -4, sw && sw.d);
+  const man = X.blendInsights([{ name: 'Weizenmehl 550', pct: 100 }], { hours: 40 });
+  check('Lange Gare mit schwachem Mehl → Manitoba-Anteil wird vorgeschlagen', man.items.some((x) => /Manitoba/.test(x.t) && x.lvl === 'warn'));
+}
+
 // ---------- 5) Rezept aus KI-Antwort (KI-Brücke) ----------
 {
   group('Rezept aus KI-Antwort (ki-import.js)');

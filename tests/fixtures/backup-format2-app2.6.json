@@ -1,0 +1,35 @@
+{
+ "app": "Teigbuch",
+ "format": 2,
+ "schema": 9,
+ "appVersion": "2.6.3",
+ "exportedAt": "2026-11-27T09:00:00.000Z",
+ "recipes": [
+  {
+   "v": 9,
+   "id": "fx9brot",
+   "name": "Mischbrot (Sicherung 2.6)",
+   "category": "bread",
+   "description": "Testrezept im Format von App 2.6.3",
+   "source": "", "tags": [], "favorite": false, "photos": [], "cover": null,
+   "yield": { "mode": "flour", "count": 1, "pieceWeight": 0, "flour": 1000, "loss": 0 },
+   "flours": [{ "name": "Weizenmehl 700 Fuchsenmühle", "pct": 70 }, { "name": "Roggenmehl R960", "pct": 30 }],
+   "water": { "pct": 70, "temp": "", "icePct": "" },
+   "oil": { "pct": 0 }, "salt": 2, "yeastType": "fresh", "yeastPct": 0.5,
+   "extras": [],
+   "preferments": [],
+   "steps": [{ "id": "s1", "kind": "mix", "name": "Kneten", "stage": "main", "durationMin": 10, "location": "rt", "temp": "", "notes": "", "parallel": false, "align": "" }],
+   "ddt": 26, "notes": "", "lamination": { "pct": 0, "name": "" }, "pan": { "shape": "", "d": 0, "l": 0, "w": 0, "n": 0 }, "parts": [],
+   "createdAt": 1795600000000, "updatedAt": 1795600000000
+  }
+ ],
+ "logs": [],
+ "cultures": [],
+ "flours": [
+  { "v": 9, "id": "fl00", "name": "Caputo Pizzeria", "kind": "tipo00", "brand": "Caputo", "w": 260, "protein": 12.5, "pl": "", "absorption": "", "falling": "", "price": "", "stock": "", "bestBefore": "", "color": "gold", "notes": "", "createdAt": 1795600000000, "updatedAt": 1795600000000 },
+  { "v": 9, "id": "flrog", "name": "Roggenmehl 960", "kind": "rye", "brand": "", "w": "", "protein": "", "pl": "", "absorption": "", "falling": 180, "price": "", "stock": "", "bestBefore": "", "color": "brown", "notes": "", "createdAt": 1795600000000, "updatedAt": 1795600000000 },
+  { "v": 9, "id": "flvk", "name": "Vollkorn vom Bauern", "kind": "whole", "brand": "", "w": "", "protein": 13, "pl": "", "absorption": "", "falling": "", "price": "", "stock": "", "bestBefore": "", "color": "green", "notes": "", "createdAt": 1795600000000, "updatedAt": 1795600000000, "zukunft": "bleibt" },
+  { "v": 9, "id": "flw", "name": "Weizenmehl 700 Fuchsenmühle", "kind": "wheat", "brand": "Fuchsenmühle", "w": "", "protein": "", "pl": "", "absorption": "", "falling": "", "price": 1.2, "stock": 3000, "bestBefore": "", "color": "blue", "notes": "", "createdAt": 1795600000000, "updatedAt": 1795600000000 },
+  { "v": 9, "id": "flx", "name": "Hausmischung", "kind": "", "brand": "", "w": "", "protein": "", "pl": "", "absorption": "", "falling": "", "price": "", "stock": "", "bestBefore": "", "color": "gold", "notes": "", "createdAt": 1795600000000, "updatedAt": 1795600000000 }
+ ]
+}

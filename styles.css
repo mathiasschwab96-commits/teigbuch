@@ -667,3 +667,24 @@ table.cmp th, table.cmp td { overflow-wrap: break-word; hyphens: auto; -webkit-h
 .tl-ing > div.chg > b { color: var(--accent); }
 /* Im Schritt-Text auf den Backtag umgerechnete Mengen */
 b.q { font-weight: 700; }
+/* ---------- 2.7: Mehl-Katalog (Getreide × Art), ⓘ-Infos, Mehl-Analyse ---------- */
+/* Kleines ⓘ neben einer Feldbezeichnung – öffnet darunter ein Infofeld */
+.ib { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-left: 4px; padding: 0; border-radius: 50%; border: 1.5px solid var(--muted);
+  background: transparent; color: var(--muted); font: italic 700 .72rem/1 Georgia, serif; vertical-align: 1px; cursor: pointer; }
+.ib.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.ii-p { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: .9rem; line-height: 1.45; }
+.ii-p p { margin: 0 0 6px; }
+.ii-p p:last-child { margin-bottom: 0; }
+.ii-warn { color: #9a5b00; }
+.ii-ok { color: var(--text); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ii-warn { color: #f0b45a; } }
+:root[data-theme="dark"] .ii-warn { color: #f0b45a; }
+/* „Gut für“: nicht anklickbare Chips */
+.chip.st { cursor: default; pointer-events: none; }
+.use-l { margin: 4px 0 6px; }
+.use-l .chips { margin-top: 4px; }
+details.ana > p { color: var(--text); }
+details.ana > p.ii-warn { color: #9a5b00; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) details.ana > p.ii-warn { color: #f0b45a; } }
+:root[data-theme="dark"] details.ana > p.ii-warn { color: #f0b45a; }
+details.ana .chips { margin: 4px 0 8px; }

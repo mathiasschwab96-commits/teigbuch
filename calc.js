@@ -514,13 +514,16 @@ export const FLOUR_KINDS = {
   spelt: 'Dinkel', rye: 'Roggen', durum: 'Hartweizen / Semola', other: 'Sonstiges',
 };
 export const FLOUR_COLORS = { gold: '#C98A2E', green: '#2F7A4A', blue: '#3F86B5', red: '#C2492D', purple: '#7A5AA6', brown: '#8A5A3B' };
-const F_KEYS = ['v', 'id', 'name', 'kind', 'brand', 'w', 'protein', 'pl', 'absorption', 'falling', 'price', 'stock', 'bestBefore', 'color', 'notes', 'createdAt', 'updatedAt'];
+const F_KEYS = ['v', 'id', 'name', 'kind', 'grain', 'type', 'brand', 'w', 'protein', 'pl', 'absorption', 'falling', 'price', 'stock', 'bestBefore', 'color', 'notes', 'createdAt', 'updatedAt'];
+// Ab Schema 10: grain (Getreide, z. B. 'weizen') und type (Art, z. B. 'at-w700') – Schlüssel aus dem Mehl-Katalog in extras.js.
+// Unbekannte Schlüssel (aus einer neueren App) bleiben erhalten, solange sie gültig aussehen. kind bleibt für ältere Apps.
+const catKey = (v) => (typeof v === 'string' && /^[a-z0-9-]{1,24}$/.test(v) ? v : '');
 export function sanitizeFlour(f) {
   const pos = (v, max) => { const x = optNum(v); return x === '' ? '' : Math.min(max, Math.max(0, x)); };
   return {
     ...keepUnknown(f, F_KEYS),
     v: Math.max(1, Math.floor(num(f?.v)) || 1), id: safeId(f?.id) || uid(), name: str(f?.name, 80).trim(),
-    kind: Object.prototype.hasOwnProperty.call(FLOUR_KINDS, f?.kind) ? f.kind : '', brand: str(f?.brand, 80),
+    kind: Object.prototype.hasOwnProperty.call(FLOUR_KINDS, f?.kind) ? f.kind : '', grain: catKey(f?.grain), type: catKey(f?.type), brand: str(f?.brand, 80),
     w: pos(f?.w, 600), protein: pos(f?.protein, 30), pl: pos(f?.pl, 5), absorption: pos(f?.absorption, 100), falling: pos(f?.falling, 900),
     price: pos(f?.price, 1000), stock: pos(f?.stock, 1000000), bestBefore: /^\d{4}-\d{2}-\d{2}$/.test(f?.bestBefore || '') ? f.bestBefore : '',
     color: Object.prototype.hasOwnProperty.call(FLOUR_COLORS, f?.color) ? f.color : 'gold', notes: str(f?.notes, 2000),

@@ -37,9 +37,13 @@
 //   9  App 2.6 – neue Datenart „Meine Mehle“ (IndexedDB „flours“, DB-Version 3; Sicherung „flours“; Sync kind 'flour').
 //               Rezepte verweisen weiterhin nur über den Mehlnamen → an Rezepten/Tagebuch ändert sich nichts.
 //               Ältere Sicherungen haben keine Mehle → einfach keine, keine Rückfrage.
+//  10  App 2.7 – Meine Mehle: grain (Getreide) + type (Art, z. B. 'at-w700') statt nur „kind“ (Sorte). kind bleibt für ältere Apps.
+//               Aus kind wird nur Eindeutiges übernommen (z. B. Roggen → Getreide Roggen, Tipo 00 → Weizen/Tipo 00);
+//               die Art bleibt sonst leer – die App erkennt Richtwerte weiter aus dem Namen, die Art kann man nachtragen.
+//               Rezepte/Tagebuch unverändert.
 import { num, sanitizeRecipe, sanitizeLog, sanitizeCulture, sanitizeFlour, CATEGORIES, isCake } from './calc.js';
 
-export const SCHEMA = 9;
+export const SCHEMA = 10;
 
 const RECIPE_MIGRATIONS = {
   // 1 → 2
@@ -88,6 +92,8 @@ const RECIPE_MIGRATIONS = {
   },
   // 8 → 9: keine Änderung am Rezept (neu ist nur die eigene Datenart „Meine Mehle“)
   8: (r) => r,
+  // 9 → 10: keine Änderung am Rezept (neu sind nur Getreide/Art bei „Meine Mehle“)
+  9: (r) => r,
 };
 
 const LOG_MIGRATIONS = {
@@ -104,6 +110,7 @@ const LOG_MIGRATIONS = {
   6: (l) => l,
   7: (l) => l,
   8: (l) => l,
+  9: (l) => l,
 };
 
 function run(rec, migrations) {
@@ -125,8 +132,12 @@ export const migrateLog = (l) => run(l, LOG_MIGRATIONS);
 const CULTURE_MIGRATIONS = {};
 export const migrateCulture = (c) => run(c, CULTURE_MIGRATIONS);
 export function importCulture(raw) { const m = migrateCulture(raw); return { rec: sanitizeCulture(m.rec), newer: m.newer }; }
-// Meine Mehle gibt es ab Schema 9 – noch keine Migrationen
-const FLOUR_MIGRATIONS = {};
+// Meine Mehle gibt es ab Schema 9
+// 9 → 10: Getreide/Art nur dort setzen, wo die alte Sorte eindeutig ist (nichts raten, kind bleibt erhalten)
+const KIND_TO = { tipo00: ['weizen', 'it-00'], tipo0: ['weizen', ''], wheat: ['weizen', ''], manitoba: ['weizen', ''], spelt: ['dinkel', ''], rye: ['roggen', ''], durum: ['hartweizen', ''] };
+const FLOUR_MIGRATIONS = {
+  9: (f) => (f.grain !== undefined ? f : { ...f, grain: KIND_TO[f.kind]?.[0] || '', type: f.type ?? (KIND_TO[f.kind]?.[1] || '') }),
+};
 export const migrateFlour = (f) => run(f, FLOUR_MIGRATIONS);
 export function importFlour(raw) { const m = migrateFlour(raw); return { rec: sanitizeFlour(m.rec), newer: m.newer }; }
 export const needsMigration = (rec) => (Math.floor(num(rec?.v)) || 1) < SCHEMA;
