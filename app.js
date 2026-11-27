@@ -20,7 +20,7 @@ import * as X from './extras.js';
 import * as KI from './ki-import.js';
 
 const { calc, fmtG, fmtPct, fmtNum, fmtDur, fmtRel, fmtTime, fmtCountdown, planInfo, uid, num, PF_TYPES, STEP_KINDS, LOCATIONS, TEMPLATES } = C;
-const VERSION = '2.6.1';
+const VERSION = '2.6.3';
 const EXPORT_META = { schema: MG.SCHEMA, appVersion: VERSION };
 // Einheitlicher Weg für ALLE Daten von außen (Datei, QR, Sync): erst migrieren, dann bereinigen
 const { importRecipe, importLog } = MG;
@@ -544,10 +544,10 @@ function ingTable(title, sub, rows, cls = '') {
 // Zeilen tragen einen Schlüssel (key) und eine Art (type) – für „🎨 Anpassen“ und das Backprotokoll
 // Einlagen (Rosinen, Nüsse, Kandiertes …) erst zum Schluss unterarbeiten – nur Hinweis + am Ende der Liste
 const LATE = /rosine|sultanine|korinthe|orangeat|zitronat|kandiert|nüsse|nuss|mandel|schoko(drops|stück|tropfen)|cranberr|olive|röstzwiebel|speckwürfel|feige|dattel|aprikose|trockenobst/i;
-function pfRows(x, yt) {
+function pfRows(x, yt, pfs = []) {
   const rows = [];
   const src = x.chained ? x.src : '';
-  if (x.starter > 0) rows.push({ key: 'starter', type: src ? 'fixed' : 'starter', name: src ? 'Vorige Stufe (komplett)' : x.pf.type === 'madre' ? 'Lievito Madre (aufgefrischt)' : 'Anstellgut', hint: src ? '' : `${fmtNum(x.pf.starterHydration ?? 100, 0)} % Hydration`, g: x.starter });
+  if (x.starter > 0) rows.push({ key: 'starter', type: src ? 'fixed' : 'starter', name: src ? `${x.srcName || pfs.find((p) => p.id === src)?.pf.name || 'Vorige Stufe'} (komplett)` : x.pf.type === 'madre' ? 'Lievito Madre (aufgefrischt)' : 'Anstellgut', hint: src ? '' : `${fmtNum(x.pf.starterHydration ?? 100, 0)} % Hydration`, g: x.starter });
   // Mehl: eine Sorte (Schlüssel „flour“) oder Mischung (fl0, fl1 …); beim Backen dazugemischte Sorten (a0 …)
   const parts = !x.seeds && (x.flourParts || []).length ? x.flourParts : [{ name: x.flourName, g: x.freshFlour }];
   const multi = parts.filter((q) => !q._key).length > 1;
@@ -587,13 +587,13 @@ function stageRows(c, stage, yt) {
   if (stage === 'main') return { title: 'Hauptteig', rows: mainRows(c, yt) };
   if (stage === 'lam') return c.lam?.g > 0 ? { title: 'Ziehfett', rows: lamRows(c) } : null;
   const x = c.pfs.find((p) => p.id === stage);
-  return x ? { title: x.pf.name || 'Vorteig', rows: pfRows(x, yt) } : null;
+  return x ? { title: x.pf.name || 'Vorteig', rows: pfRows(x, yt, c.pfs) } : null;
 }
 
 function ingredientBlocks(c, yt, withTotals) {
   if (c.kind === 'cake') return cakeBlocks(c);
   const warn = c.warnings.length ? `<div class="warn">${c.warnings.map((w) => `⚠️ ${esc(w)}`).join('<br>')}</div>` : '';
-  const blocks = c.pfs.map((x, i) => ingTable(`${PF_TYPES[x.pf.type]?.icon || '🥣'} ${esc(x.pf.name || 'Vorteig')}`, `Stufe ${i + 1}`, pfRows(x, yt), 'pf')).join('');
+  const blocks = c.pfs.map((x, i) => ingTable(`${PF_TYPES[x.pf.type]?.icon || '🥣'} ${esc(x.pf.name || 'Vorteig')}`, `Stufe ${i + 1}`, pfRows(x, yt, c.pfs), 'pf')).join('');
   const main = ingTable(c.lam?.g > 0 ? '🌀 Grundteig' : '🌀 Hauptteig', c.pfs.length ? `Stufe ${c.pfs.length + 1}` : 'direkte Führung', mainRows(c, yt), 'main')
     + (c.lam?.g > 0 ? ingTable('🧈 Ziehfett', 'zum Tourieren', lamRows(c), 'pf') : '');
   let totals = '';
@@ -645,6 +645,9 @@ function waterTempResult(r) {
 function recipeFlow(r, info) {
   if (!r.steps?.length) return `<div class="empty small"><p>Noch kein Ablauf hinterlegt.</p><a class="btn primary" href="#/edit/${r.id}" data-action="editAt" data-step="${flowStep(r)}">Ablauf anlegen</a></div>`;
   const loc = C.locationMinutes(r.steps);
+  // Mengen in den Schritten passend zur oben eingestellten Menge
+  const c = isCake(r) ? C.calcCake(r, cakeOv(S.scale)) : calc(r, { yield: S.scale.yield });
+  const q = { ing: (s) => stepAmounts(s, c, r.yeastType, r.steps), factor: qtyFactor(c, r) };
   return `
   <section class="card">
     <div class="flow-sum"><div><small>Gesamt</small><b>${fmtDur(info.total)}</b></div><div><small>Backen nach</small><b>${fmtDur(info.bakeOff)}</b></div></div>
@@ -657,14 +660,113 @@ function recipeFlow(r, info) {
       ${loc.oven ? `<span><i class="loc-oven"></i>Ofen ${fmtDur(loc.oven)}</span>` : ''}
     </div>
   </section>
-  <ol class="tl">${info.tl.map((s) => stepRow(s, `+${fmtDur(s.start / 60000)}`, r)).join('')}</ol>`;
+  <ol class="tl">${info.tl.map((s) => stepRow(s, `+${fmtDur(s.start / 60000)}`, r, '', '', q)).join('')}</ol>`;
+}
+
+// ---------- Mengen in den Schritten (Zeitstrahl, Schritt-Hinweise) ----------
+// Welche Zutaten-Stufe gehört zu einem Schritt? steps = alle Schritte desselben Ablaufs (für „erstes Tourieren“)
+// Zutaten nur bei Schritten zeigen, in denen tatsächlich etwas vermengt wird
+const MIX_KINDS = new Set(['prep', 'autolyse', 'mix']);
+// Kuchen: Zutaten bei allen Schritten mit zugeordnetem Bestandteil (z. B. „Füllen“); Tourieren: Ziehfett beim ersten Tourieren
+function stageOfStepIn(cake, steps, st) {
+  if (!st) return null;
+  if (cake) return st.stage || null;
+  if (st.kind === 'laminate') {
+    const first = (steps || []).findIndex((x) => x.kind === 'laminate');
+    return st.stage || (first === st.i ? 'lam' : null);
+  }
+  if (!MIX_KINDS.has(st.kind)) return null;
+  return st.stage || (st.kind === 'mix' ? 'main' : null);
+}
+// 🫙 Anstellgut auffrischen: so viel, wie die Vorteige mit Anstellgut brauchen (Folgestufen zählen nicht) + Rest zum Weiterführen
+const CULT_REST = 20;
+const starterNeed = (c) => (c && c.kind !== 'cake' ? c.pfs.filter((x) => !x.chained && x.starter > 0).reduce((a, x) => a + x.starter, 0) : 0);
+function feedRows(cu, c) {
+  const need = starterNeed(c);
+  if (!cu || cu.type === 'yeastwater' || !(need > 0)) return null;
+  const [sa, fl, wa] = (cu.ratio || [1, 1, 1]).map(num), sum = sa + fl + wa;
+  if (!(sum > 0)) return null;
+  const g = (x) => Math.round(((need + CULT_REST) * x) / sum);
+  return { title: `${cu.name || 'Anstellgut'} auffrischen`, hint: `${fmtG(Math.round(need))} fürs Rezept + ${fmtG(CULT_REST)} Rest zum Weiterführen`, rows: [
+    { key: 'cs', type: 'fixed', name: cu.type === 'madre' ? 'Madre' : 'Anstellgut', g: g(sa) },
+    { key: 'cf', type: 'fixed', name: 'Mehl', g: g(fl) },
+    { key: 'cw', type: 'fixed', name: 'Wasser', g: g(wa) },
+  ] };
+}
+// Zutaten eines Schritts mit den Mengen des Backtags (null = keine)
+function stepAmounts(st, c, yt, steps) {
+  if (!c) return null;
+  if (st.cultureId) return feedRows(cultById(st.cultureId), c);
+  const stage = stageOfStepIn(c.kind === 'cake', steps, st);
+  return stage ? stageRows(c, stage, yt) : null;
+}
+// Mengenfaktor gegenüber dem Rezept (für Mengen im Schritt-Text, die keiner Zutat eindeutig zuzuordnen sind)
+function qtyFactor(c, r) {
+  if (!c || !r) return 1;
+  if (c.kind === 'cake') return num(c.factor) > 0 ? num(c.factor) : 1;
+  const b = calcFor(r);
+  return b.F > 0 && c.F > 0 ? c.F / b.F : 1;
+}
+// Mengen im Schritt-Text („400 g Weizenmehl, 80 g Sauerteig …“) auf den Backtag umrechnen:
+// Zutat der Stufe eindeutig erkennbar → genau deren Menge; sonst mit dem Mengenfaktor skaliert.
+const firstWord = (n) => (String(n || '').toLowerCase().match(/[a-zäöüß]+/) || [''])[0];
+const rowGrams = (x) => (Number.isFinite(x.g) ? x.g : x.type === 'cake' && /^(g|ml)$/.test(x.unit) ? num(x.v) : NaN);
+const AMT_RX = /(\d+(?:[.,]\d+)?)(?:\s*(?:–|-|bis)\s*(\d+(?:[.,]\d+)?))?\s*(kg|g|ml)\b(\s+([A-Za-zÄÖÜäöüß]+))?/g;
+function noteHtml(text, ing, factor = 1) {
+  let t = String(text || '');
+  if (!t) return '';
+  if (ing && /Füttern-Rechner/.test(t)) t = t.replace(/\s*–\s*Menge siehe Füttern-Rechner\.?/, '.');
+  const rows = (ing?.rows || []).filter((x) => Number.isFinite(rowGrams(x)));
+  const find = (w) => {
+    if (!w) return [];
+    const hit = rows.filter((x) => firstWord(x.name) === w);
+    if (hit.length) return hit;
+    const ty = { mehl: 'flour', hefe: 'yeast', vorteig: 'fixed' }[w];
+    return ty ? rows.filter((x) => x.type === ty) : [];
+  };
+  const toG = (s, unit) => num(String(s).replace(',', '.')) * (unit === 'kg' ? 1000 : 1);
+  const ms = [...t.matchAll(AMT_RX)].map((m) => ({ m, v: toG(m[1], m[3]), cand: m[2] ? [] : find((m[5] || '').toLowerCase()) }));
+  // Kommt dieselbe Zutat mehrmals im Text vor (z. B. Wasser in zwei Portionen), wird nicht ersetzt
+  const used = new Map();
+  ms.forEach((x) => { if (x.cand.length === 1) used.set(x.cand[0], (used.get(x.cand[0]) || 0) + 1); });
+  const pairs = ms.filter((x) => x.cand.length === 1 && used.get(x.cand[0]) === 1 && x.v > 0).map((x) => ({ x, ratio: rowGrams(x.cand[0]) / x.v }));
+  // Maßstab des Texts: passen mindestens zwei Zutaten zusammen, gilt ihr Verhältnis; sonst der Mengenfaktor.
+  // Eine Zutat wird nur ersetzt, wenn sie zu diesem Maßstab passt – „ca. 30 g Wasser zurückhalten“ bleibt so eine Teilmenge.
+  const rs = pairs.map((p) => p.ratio).sort((a, b) => a - b), med = rs[Math.floor((rs.length - 1) / 2)];
+  // „passt“ = höchstens Faktor 1,6 vom Maßstab entfernt (Teilmengen wie 30 von 350 g liegen weit darüber)
+  const close = (a, b) => Math.abs(Math.log(a / b)) <= Math.log(1.6);
+  const agree = rs.filter((x) => close(x, med)).length;
+  const fac = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  const scale = rs.length >= 2 && agree >= 2 ? med : fac;
+  const near = (ratio) => close(ratio, scale);
+  const fmtQ = (v, u) => (u === 'ml' ? `${fmtNum(v, v < 10 ? 1 : 0)} ml` : fmtG(v));
+  let out = '', pos = 0;
+  ms.forEach(({ m, v, cand }) => {
+    const u = m[3] === 'ml' ? 'ml' : 'g', pair = pairs.find((p) => p.x.m === m);
+    let rep = null;
+    if (pair && near(pair.ratio)) rep = fmtQ(rowGrams(cand[0]), u);
+    else if (Math.abs(scale - 1) > 0.005) rep = m[2] ? `${fmtNum(v * scale, 0)}–${fmtQ(toG(m[2], m[3]) * scale, u)}` : fmtQ(v * scale, u);
+    if (rep === null) return;
+    const orig = m[0].slice(0, m[0].length - (m[4] || '').length);
+    out += esc(t.slice(pos, m.index)) + `<b class="q" title="Rezepttext: ${esc(orig.trim())}">${rep}</b>`;
+    pos = m.index + orig.length;
+  });
+  return out + esc(t.slice(pos));
+}
+// Kleine Zutatenliste im aufgeklappten Schritt
+function stepIngHtml(ing) {
+  if (!ing?.rows?.length) return '';
+  return `<div class="tl-ing"><div class="tl-ing-h">🧾 ${esc(ing.title)}${ing.hint ? ` <small class="muted">· ${esc(ing.hint)}</small>` : ''}</div>
+    ${ing.rows.map((x) => `<div ${x.chg ? 'class="chg"' : ''}><span>${x.type === 'flour' && myF(x.name) ? fDot(myF(x.name)) : ''}${esc(x.name)}${x.hint ? ` <small class="muted">${esc(x.hint)}</small>` : ''}</span><b>${x.txt ?? fmtG(x.g)}</b></div>`).join('')}</div>`;
 }
 
 // Eine Zeile im Zeitstrahl: Kopf immer sichtbar, Details per Tipp aufklappbar
-function stepRow(s, when, r, extra = '', tail = '') {
+// q = { ing: (Schritt) → Zutaten mit Mengen des Backtags, factor: Mengenfaktor } – ohne q nur der Stufenname
+function stepRow(s, when, r, extra = '', tail = '', q = null) {
   const k = kindOf(s.kind), l = locOf(s.location);
-  const stageName = s.stage === 'main' ? 'Hauptteig' : s.stage === 'lam' ? 'Ziehfett'
-    : [...(r?.preferments || []), ...(r?.parts || [])].find((p) => p.id === s.stage)?.name;
+  const ing = q?.ing ? q.ing(s) : null;
+  const stageName = !ing && (s.stage === 'main' ? 'Hauptteig' : s.stage === 'lam' ? 'Ziehfett'
+    : [...(r?.preferments || []), ...(r?.parts || [])].find((p) => p.id === s.stage)?.name);
   const details = [
     s.temp && `🌡️ ${esc(s.temp)}`,
     stageName && `Zutaten: ${esc(stageName)}`,
@@ -675,13 +777,13 @@ function stepRow(s, when, r, extra = '', tail = '') {
     s._adj && `🪄 Nachtruhe: ${s._adj > 0 ? '+' : '−'}${fmtDur(Math.abs(s._adj))}`,
     s._dur !== undefined && `🧪 Gärzeit geändert (Rezept: ${fmtDur(s._dur)})`,
   ].filter(Boolean);
-  const more = details.length || s.notes;
+  const more = details.length || s.notes || ing;
   // Nebenher-Schritte: eingerückt unter dem Hauptschritt, mit Uhrzeit von–bis (sofern bekannt)
   const par = s.parallel ? `<span class="par-tag">nebenher${s.end !== undefined && s.start > 1e11 ? ` bis ${fmtTime(s.end)}` : ''}</span> · ` : '';
   const head = `<div class="tl-h"><b>${esc(s.name || k.label)}</b><span class="tl-when">${when}</span></div>
     <div class="tl-m">${par}<span class="loc-chip loc-${s.location}">${l.icon} ${l.short}</span> ${fmtDur(s.durationMin)}${s._comp ? ' 🌡️' : ''}${s._adj ? ' 🪄' : ''}${s.repeat?.count ? ` · 🔁 ${s.repeat.count}×` : ''}${more ? ' · <span class="tl-more">mehr</span>' : ''}</div>`;
   const body = more
-    ? `<details><summary>${head}</summary>${details.length ? `<div class="tl-m">${details.join('<br>')}</div>` : ''}${s.notes ? `<div class="tl-n">${esc(s.notes)}</div>` : ''}</details>`
+    ? `<details><summary>${head}</summary>${details.length ? `<div class="tl-m">${details.join('<br>')}</div>` : ''}${stepIngHtml(ing)}${s.notes ? `<div class="tl-n">${q ? noteHtml(s.notes, ing, q.factor) : esc(s.notes)}</div>` : ''}</details>`
     : head;
   return `<li class="tl-i loc-${s.location} ${s.parallel ? 'par' : ''} ${extra}"><div class="tl-dot">${k.icon}</div><div class="tl-c">${body}</div>${tail}</li>`;
 }
@@ -1422,6 +1524,7 @@ function vPlan(id) {
   const hasAdj = Object.keys(P.adj || {}).length > 0;
   const cake = isCake(r);
   const c = calcFor(planRecipe(r), planOv(r));
+  const q = { ing: (s) => stepAmounts(s, c, r.yeastType, steps), factor: qtyFactor(c, r) };
   const cat = catOf(r.category);
   // Hinweis: Beim letzten Backen wurde mit „🎨 Anpassen“ etwas geändert → für diesen Backtag übernehmen?
   const lastLog = logsFor(id)[0], lp = lastLog?.protocol;
@@ -1492,7 +1595,7 @@ function vPlan(id) {
     ${yeastFitCard(r)}
     ${cake ? '' : flourAmp(X.flourCheck(planRecipe(r), { hydration: P.ov.hydration, steps: planDurSteps(r).map((s) => (P.adj?.[s.id] ? { ...s, durationMin: num(s.durationMin) + P.adj[s.id] } : s)) }), { quiet: true })}
     <h3 class="sec">Zeitplan</h3>
-    <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '')).join('')}
+    <ol class="tl">${info.tl.map((s) => stepRow(s, fmtRel(s.start), r, C.isNight(s.start, S.settings.nightFrom, S.settings.nightTo) ? 'night' : '', '', q)).join('')}
       <li class="tl-i end"><div class="tl-dot">🎉</div><div class="tl-c"><div class="tl-h"><b>Fertig</b><span class="tl-when">${fmtRel(info.endAt)}</span></div></div></li>
     </ol>
   </div>
@@ -1562,7 +1665,7 @@ function planStepsBase(r, adj = S.plan?.adj || {}) {
   if (!c) return steps;
   const [sa, fl, wa] = c.ratio || [1, 1, 1];
   return [
-    C.step('prep', `${c.name} auffrischen`, 5, 'rt', { id: `cult-${c.id}`, cultureId: c.id, notes: c.type === 'yeastwater' ? 'Hefewasser nachfüttern.' : `Füttern ${fmtNum(sa, 2)} : ${fmtNum(fl, 2)} : ${fmtNum(wa, 2)} (Anstellgut : Mehl : Wasser) – Menge siehe Füttern-Rechner.` }),
+    C.step('prep', `${c.name} auffrischen`, 5, 'rt', { id: `cult-${c.id}`, cultureId: c.id, notes: c.type === 'yeastwater' ? 'Hefewasser nachfüttern.' : `Füttern ${fmtNum(sa, 2)} : ${fmtNum(fl, 2)} : ${fmtNum(wa, 2)} (Anstellgut : Mehl : Wasser).` }),
     C.step('rest', `${c.name} reifen lassen`, Math.max(30, Math.round(num(c.lead) * 60)), c.type === 'madre' ? 'warm' : 'rt', { id: `cultr-${c.id}`, notes: 'Bereit, wenn sie sich etwa verdoppelt hat.' }),
     ...steps,
   ];
@@ -1765,6 +1868,8 @@ function vSession(sid) {
   const planned = cur && cur.i === 0 && cur.start > now;
   const done = !cur;
   const r = byId(s.recipeId);
+  // Mengen in den Schritten: die des Backtags (inkl. „🎨 Anpassen“)
+  const sq = { ing: (x) => stepIngredients(s, x), factor: qtyFactor(s.calc, r) };
   let heroHtml;
   if (s.status !== 'active') {
     heroHtml = `<div class="hero-timer done"><div class="ht-name">${s.status === 'done' ? '✅ Abgeschlossen' : '⏹️ Abgebrochen'}</div>${s.status === 'done' && !s.logId && r ? `<a class="btn primary big" href="#/log/${s.recipeId}/new?session=${s.id}">📓 Tagebuch-Eintrag erstellen</a>` : ''}</div>`;
@@ -1793,7 +1898,7 @@ function vSession(sid) {
       <div class="progress"><i data-prog="${cur.start},${cur.end}"></i></div>
       ${compNote(cur)}
       ${rep}
-      ${cur.notes ? `<div class="ht-notes">${esc(cur.notes)}</div>` : ''}
+      ${cur.notes ? `<div class="ht-notes">${noteHtml(cur.notes, sq.ing(cur), sq.factor)}</div>` : ''}
       ${sideSteps(s, tl, cur, now)}
       ${measBox(s, cur)}
       <div class="ht-tools">
@@ -1810,7 +1915,7 @@ function vSession(sid) {
   if (s.status === 'active' && cur && !planned) {
     const stg = stepIngredients(s, cur);
     const next = nextMain(tl, cur.i);
-    goHtml = `${stg ? `<section class="card step-ing" data-tk="${s.id}:${cur.i}"><div class="card-h"><b>🧾 Zutaten: ${esc(stg.title)}</b><small class="muted">antippen zum Abhaken</small></div>${ingTable('', '', stg.rows)}${adjBox(s, stg)}</section>` : ''}
+    goHtml = `${stg ? `<section class="card step-ing" data-tk="${s.id}:${cur.i}"><div class="card-h"><b>🧾 Zutaten: ${esc(stg.title)}</b><small class="muted">${stg.hint ? `${esc(stg.hint)} · ` : ''}antippen zum Abhaken</small></div>${ingTable('', '', stg.rows)}${adjBox(s, stg)}</section>` : ''}
       <button class="btn primary big block step-go" data-action="stepDone" data-id="${s.id}" data-i="${cur.i}">${icon('check')} ${next ? `Weiter: ${esc(next.name)}` : 'Fertig'}</button>`;
   }
   const html = `
@@ -1829,7 +1934,7 @@ function vSession(sid) {
       const isRun = !x.doneAt && x.start <= now && s.status === 'active';
       const when = x.doneAt ? `✓ ${fmtTime(x.doneAt)}` : fmtRel(x.start);
       return stepRow(x, when, r, `${x.doneAt ? 'done' : ''} ${isRun ? 'run' : ''} ${!x.doneAt && x.end < now && isRun ? 'over' : ''}`,
-        isRun && x.i !== cur?.i ? `<button class="icon-btn tl-done" data-action="stepDone" data-id="${s.id}" data-i="${x.i}" aria-label="Erledigt">${icon('check')}</button>` : '');
+        isRun && x.i !== cur?.i ? `<button class="icon-btn tl-done" data-action="stepDone" data-id="${s.id}" data-i="${x.i}" aria-label="Erledigt">${icon('check')}</button>` : '', sq);
     }).join('')}</ol>
     <details class="card"><summary>Alle Zutaten <small class="muted">${s.calc.kind === 'cake' ? `${esc(C.panLabel(s.calc.pan) || `${fmtNum(s.calc.factor, 2)}× Rezept`)} · ≈ ${fmtG(s.calc.total)}`
       : `${s.calc.mode === 'flour' ? fmtG(s.calc.F) + ' Mehl' : `${fmtNum(s.calc.count, 0)} × ${fmtNum(s.calc.pieceWeight, 0)} g`} · ${fmtPct(s.calc.totals.hydration)}`}</small></summary>${ingredientBlocks(sessCalc(s), s.yeastType, true)}</details>
@@ -1856,21 +1961,11 @@ async function finishStep(s, i, hands) {
   render();
 }
 const hasDone = (s) => s.steps.some((x) => x.doneAt);
-// Zutaten nur bei Schritten zeigen, in denen tatsächlich etwas vermengt wird
-const MIX_KINDS = new Set(['prep', 'autolyse', 'mix']);
-// Kuchen: Zutaten bei allen Schritten mit zugeordnetem Bestandteil (z. B. „Füllen“); Tourieren: Ziehfett beim ersten Tourieren
-function stageOfStep(s, st) {
-  if (!st) return null;
-  if (s.calc?.kind === 'cake') return st.stage || null;
-  if (st.kind === 'laminate') {
-    const first = s.steps.findIndex((x) => x.kind === 'laminate');
-    return st.stage || (first === st.i ? 'lam' : null);
-  }
-  if (!MIX_KINDS.has(st.kind)) return null;
-  return st.stage || (st.kind === 'mix' ? 'main' : null);
-}
+const stageOfStep = (s, st) => stageOfStepIn(s.calc?.kind === 'cake', s.steps, st);
 const rowVal = (x) => (x.type === 'cake' ? num(x.v) : num(x.g));
 function stepIngredients(s, st) {
+  // 🫙 Anstellgut auffrischen: Mengen aus dem Anstellgut-Bedarf des Backtags
+  if (st?.cultureId) return feedRows(cultById(st.cultureId), sessCalc(s));
   const stage = stageOfStep(s, st);
   const res = stage ? stageRows(sessCalc(s), stage, s.yeastType) : null;
   if (!res) return null;
@@ -2024,7 +2119,7 @@ function sideSteps(s, tl, cur, now) {
 }
 // „🎨 Anpassen“ unter den Zutaten eines Schritts (eingeklappt)
 function adjBox(s, stg) {
-  if (!feat('adjust') || !stg) return '';
+  if (!feat('adjust') || !stg?.stage) return '';
   const st = stg.stage, cake = s.calc?.kind === 'cake', key = `${s.id}:${st}`;
   const c = sessCalc(s), c0 = sessCalc(s, false), changed = !!s.adjust?.[st];
   const rows = stg.rows.filter((r) => r.type !== 'fixed');
@@ -2111,7 +2206,7 @@ function vHands(s) {
       <div class="hands-cd" data-cd="${cur.end}" data-cd-mode="bare"></div>
       <div class="progress big"><i data-prog="${cur.start},${cur.end}"></i></div>
       ${compNote(cur)}${rep}
-      ${cur.notes ? `<div class="hands-notes">${esc(cur.notes)}</div>` : ''}
+      ${cur.notes ? `<div class="hands-notes">${noteHtml(cur.notes, stg, qtyFactor(s.calc, byId(s.recipeId)))}</div>` : ''}
       ${stg ? `<div class="hands-ing" data-tk="${s.id}:${cur.i}">${stg.rows.map((x) => `<div data-action="tick"><span>${esc(x.name)}</span><b>${x.txt ?? fmtG(x.g)}</b></div>`).join('')}</div>` : ''}
       ${side ? `<div class="hands-sub">⇉ Nebenher: <b>${esc(side.name)}</b> ${side.start > now ? `ab ${fmtTime(side.start)}` : `· <span data-cd="${side.end}" data-cd-mode="left"></span>`}</div>` : ''}
       <div class="grow"></div>
@@ -2212,7 +2307,7 @@ function protoBlocks(c, c0, yt) {
     return { name: x.name, txt, was: was === txt ? '' : was };
   }) });
   if (c.kind === 'cake') return c.parts.map((p) => mk(p.name || 'Zutaten', cakeRows(p), cakeRows(c0.parts.find((y) => y.id === p.id) || { items: [] })));
-  const out = c.pfs.map((x) => mk(x.pf.name || 'Vorteig', pfRows(x, yt), pfRows(c0.pfs.find((y) => y.id === x.id) || x, yt)));
+  const out = c.pfs.map((x) => mk(x.pf.name || 'Vorteig', pfRows(x, yt, c.pfs), pfRows(c0.pfs.find((y) => y.id === x.id) || x, yt, c0.pfs)));
   out.push(mk(c.lam?.g > 0 ? 'Grundteig' : 'Hauptteig', mainRows(c, yt), mainRows(c0, yt)));
   if (c.lam?.g > 0) out.push(mk('Ziehfett', lamRows(c), c0.lam?.g > 0 ? lamRows(c0) : []));
   return out;
@@ -2961,7 +3056,7 @@ function recipeText(r) {
     c.parts.forEach((p) => { lines.push(`— ${p.name || 'Zutaten'} —`); cakeRows(p).forEach((row) => lines.push(`${row.name}: ${row.txt}`)); lines.push(''); });
   } else {
     lines.push(`Menge: ${r.yield.mode === 'flour' ? fmtG(c.F) + ' Mehl' : `${fmtNum(c.count, 0)} × ${fmtNum(c.pieceWeight, 0)} g`} · Hydration ${fmtPct(c.totals.hydration)}`, '');
-    c.pfs.forEach((x) => { lines.push(`— ${x.pf.name} —`); pfRows(x, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`)); lines.push(''); });
+    c.pfs.forEach((x) => { lines.push(`— ${x.pf.name} —`); pfRows(x, r.yeastType, c.pfs).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`)); lines.push(''); });
     lines.push(c.lam.g > 0 ? '— Grundteig —' : '— Hauptteig —');
     mainRows(c, r.yeastType).forEach((row) => lines.push(`${row.name}: ${fmtG(row.g)}`));
     if (c.lam.g > 0) lines.push('', '— Ziehfett —', `${c.lam.name}: ${fmtG(c.lam.g)}`);

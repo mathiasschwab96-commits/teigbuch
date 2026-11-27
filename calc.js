@@ -257,7 +257,7 @@ export function calc(r, ov = {}) {
     const pfExtras = (pf.extras || []).map((e) => ({ name: e.name, pct: num(e.pct), g: F * p(e.pct) })).filter((e) => e.g > 0);
     const exG = sum(pfExtras, (e) => e.g);
     pfRes.push({ id: pf.id, pf, flourName: pf.seeds ? (pf.flourName || 'Saaten') : '', flour, water, yeast, starter, salt: pfSalt, seeds: !!pf.seeds,
-      milk: share > 0, milkG, waterG: freshWater - milkG + (src ? 0 : sWater), chained: !!src, src: src?.id || '', extras: pfExtras,
+      milk: share > 0, milkG, waterG: freshWater - milkG + (src ? 0 : sWater), chained: !!src, src: src?.id || '', srcName: src ? String(src.pf.name || '').trim() : '', extras: pfExtras,
       liqName: String(pf.liquidName || '').trim() || 'Milch',
       freshFlour: flour - sFlour, freshWater, total: flour + water + yeast + pfSalt + exG + sRest });
   });
